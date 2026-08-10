@@ -1359,7 +1359,7 @@ def format_google_trends(
 
 
 # ============================================================
-# 14. Gemini 2.5 Flash
+# 14. Gemini 3.6 Flash
 # ============================================================
 
 def generate_gemini_report(
@@ -1379,7 +1379,7 @@ def generate_gemini_report(
     url = (
         "https://generativelanguage.googleapis.com/"
         "v1beta/models/"
-        "gemini-2.5-flash:generateContent"
+        "gemini-3.6-flash:generateContent"
     )
 
     headers = {
