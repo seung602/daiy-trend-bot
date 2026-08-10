@@ -38,6 +38,12 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 
+# GitHub Actions 등에서 변경 가능하도록 모델 변수화 (기본값: gemini-3.6-flash)
+GEMINI_MODEL = os.getenv(
+    "GEMINI_MODEL",
+    "gemini-3.6-flash"
+)
+
 
 # ============================================================
 # 1. HTTP Session
@@ -1174,8 +1180,6 @@ def calculate_trend_scores(
 
         else:
 
-            # Cold-start를 상승으로 조작하지 않음.
-            # 과거 데이터가 없으면 velocity 중립값.
             velocity_score = 0.5
 
         trend_score = (
@@ -1359,7 +1363,7 @@ def format_google_trends(
 
 
 # ============================================================
-# 14. Gemini 3.6 Flash
+# 14. Gemini Report Generator (한국어/아랍어/영어 & 0데이터 방어)
 # ============================================================
 
 def generate_gemini_report(
@@ -1378,8 +1382,7 @@ def generate_gemini_report(
 
     url = (
         "https://generativelanguage.googleapis.com/"
-        "v1beta/models/"
-        "gemini-3.6-flash:generateContent"
+        f"v1beta/models/{GEMINI_MODEL}:generateContent"
     )
 
     headers = {
@@ -1391,30 +1394,11 @@ def generate_gemini_report(
 
     for item in social_data:
 
-        platform = item.get(
-            "platform",
-            ""
-        )
-
-        query = item.get(
-            "query",
-            ""
-        )
-
-        tag = item.get(
-            "tag",
-            ""
-        )
-
-        region = item.get(
-            "region",
-            ""
-        )
-
-        text = item.get(
-            "text",
-            ""
-        )
+        platform = item.get("platform", "")
+        query = item.get("query", "")
+        tag = item.get("tag", "")
+        region = item.get("region", "")
+        text = item.get("text", "")
 
         source = platform
 
@@ -1428,293 +1412,79 @@ def generate_gemini_report(
             f"[{source} | {region}] {text}"
         )
 
-    social_text = "\n".join(
-        social_lines
-    )
+    social_text = "\n".join(social_lines)
+
+    social_count = len(social_data)
+    google_available = bool(google_nl) or bool(google_de)
+
+    if social_count == 0 and not google_available:
+        data_status = """
+CRITICAL DATA STATUS:
+Today's live dataset contains ZERO valid social samples, and Google Trends data is unavailable.
+Therefore:
+- DO NOT invent or fabricate a Top 5 trend ranking.
+- DO NOT claim that PDRN, spicules, Ectoin, Volufiline, etc. are today's measured trending signals.
+- Explicitly state that today's live dataset is insufficient to calculate statistical trends.
+- You may provide general market context or an AI Commercial Hypothesis, but it must NOT be presented as today's measured trend.
+"""
+    else:
+        data_status = f"""
+DATA STATUS:
+Valid social samples: {social_count}
+Use the provided data and quantitative metrics as primary evidence. Do not invent unverified trends.
+"""
 
     prompt = f"""
-You are the CEO and Head of Sourcing for a
-European cosmetics and skincare e-commerce platform
-based in the Netherlands.
+You are the CEO and Head of Sourcing for a European cosmetics and skincare e-commerce platform based in the Netherlands.
+Your task is to generate a DAILY COSMETICS & SKINCARE MARKET TREND REPORT.
 
-TARGET CUSTOMER SEGMENTS
+{data_status}
 
-1. Dutch / Western European customers
+GOOGLE TRENDS:
+Netherlands: {format_google_trends(google_nl)}
+Germany: {format_google_trends(google_de)}
 
-- barrier repair
-- hydration
-- sunscreen
-- clean beauty
-- sensitive skin
-
-2. German cross-border customers
-
-- DM / Rossmann style trends
-- clinical ingredients
-- affordable efficacy
-- K-beauty
-
-3. Arab / Middle Eastern customers living in Europe
-
-- hyperpigmentation
-- dark spots
-- brightening
-- halal / vegan
-- high-potency skincare
-
-4. K-Beauty / Asian Beauty enthusiasts
-
-- glass skin
-- PDRN
-- spicule
-- reedle
-- sunsticks
-- innovative textures
-
-
-DATA QUALITY RULES
-
-Frequency and Trend are NOT the same thing.
-
-"Mentions" means today's observed volume.
-
-"Velocity" means today's volume compared with
-the available historical baseline.
-
-"Persistence" means how consistently the signal
-has appeared across recent days.
-
-"Cross-platform" means whether the signal appears
-across multiple platforms.
-
-"Regional" means whether the signal appears across
-multiple geographic segments.
-
-Never claim that a keyword is rising merely because
-it has a high mention count.
-
-A high-volume keyword with negative velocity should
-be described as established or declining.
-
-If historical data is insufficient, explicitly say:
-
-"Insufficient historical data for velocity."
-
-Never invent missing data.
-
-Never treat unavailable Google Trends data as a
-real market signal.
-
-
-GOOGLE TRENDS
-
-Netherlands raw Google Trends:
-{format_google_trends(google_nl)}
-
-Germany raw Google Trends:
-{format_google_trends(google_de)}
-
-
-QUANTITATIVE TREND SCORES
-
+QUANTITATIVE TREND SCORES:
 {trend_summary}
 
-
-KNOWN VOCABULARY FREQUENCY
-
+KNOWN VOCABULARY FREQUENCY:
 {freq_summary}
 
-
-LIVE SOCIAL SAMPLES
-
-Total valid samples:
-{len(social_data)}
-
+LIVE SOCIAL SAMPLES:
 {social_text}
 
+========================================================
+STRICT LANGUAGE & ORDER RULES
+========================================================
+The report MUST contain exactly THREE sections separated by `===SPLIT_SECTION===`.
+The exact order MUST be:
+1. KOREAN (한국어)
+2. ARABIC (العربية)
+3. ENGLISH (영어)
 
-NEW TREND DISCOVERY
+Do NOT include Dutch or German.
 
-Do NOT rely only on the known vocabulary list.
-
-Scan the complete social sample for repeated unknown:
-
-- ingredients
-- molecules
-- formulations
-- textures
-- product formats
-- beauty treatments
-- consumer problems
-- product names
-- emerging slang
-- hashtags
-- K-beauty terminology
-
-Examples include:
-
-Spicule
-Reedle
-Volufiline
-Exosomes
-skin cycling
-slugging
-skin flooding
-
-
-SIGNAL CLASSIFICATION
-
-Classify each signal as one of:
-
-- EMERGING
-- RISING
-- ESTABLISHED
-- DECLINING
-- INSUFFICIENT DATA
-
-
-IMPORTANT
-
-A signal with insufficient history must NOT be
-presented as statistically rising.
-
-Use the exact phrase:
-
-"Insufficient historical data for velocity."
-
-when historical data is insufficient.
-
-
-BUSINESS PRIORITY
-
-Prioritize signals using:
-
-1. High Trend Score
-2. Positive velocity
-3. Multi-platform presence
-4. Regional relevance
-5. Repeated appearance
-6. Commercial sourcing potential
-
-
-GOOGLE TRENDS FILTERING
-
-First determine which Google Trends items are actually
-related to cosmetics, skincare, beauty, ingredients,
-consumer products or relevant retail behavior.
-
-Do NOT assume every Google Trend is a beauty trend.
-
-
-REPORT FORMAT
-
-Generate a daily COSMETICS & SKINCARE MARKET TREND REPORT.
-
-Use exactly three sections.
-
-Separate sections with:
+--- SECTION 1 (KOREAN) ---
+Title: 🌐 글로벌 화장품 & 스킨케어 시장 데일리 트렌드 리포트
+1. 📈 오늘의 TOP 5 트렌드 시그널 (데이터가 부족하면 강제로 순위를 만들지 말고, 데이터 부족 안내 및 AI 상업적 가설(AI Commercial Hypothesis)로 대체할 것)
+2. 💡 CEO 소싱 & 마케팅 전략 (네덜란드/서유럽, 독일, 아랍/중동 고객, K-Beauty 대상)
+3. 💄 바이럴 제품 컨셉
 
 ===SPLIT_SECTION===
 
+--- SECTION 2 (ARABIC) ---
+Title: 🌐 التقرير اليومي العالمي لاتجاهات مستحضرات التجميل والعناية بالبشرة
+1. 📈 أهم 5 إشارات للاتجاهات اليوم (إذا كانت البيانات غير كافية، اذكر ذلك بوضوح ولا تختلق شيئاً)
+2. 💡 استراتيجية التوريد والتسويق
+3. 💄 مفهوم منتج تجاري
 
-SECTION 1 — ENGLISH
+===SPLIT_SECTION===
 
-🌐 GLOBAL COSMETICS MARKET DAILY REPORT
-
-1. 📈 TOP 5 TREND SIGNALS TODAY
-
-For each:
-
-- keyword / ingredient
-- status
-- Trend Score
-- evidence
-- commercial interpretation
-
+--- SECTION 3 (ENGLISH) ---
+Title: 🌐 GLOBAL COSMETICS & SKINCARE MARKET DAILY TREND REPORT
+1. 📈 TOP 5 TREND SIGNALS TODAY (If data is insufficient, state clearly and provide AI Commercial Hypothesis)
 2. 💡 CEO SOURCING & MARKETING STRATEGY
-
-Cover:
-
-- Netherlands
-- Germany
-- Arab / Middle Eastern Europe
-- K-Beauty
-
 3. 💄 VIRAL PRODUCT CONCEPT
-
-Create one commercially realistic product concept
-based on the strongest signals.
-
-Include:
-
-- ingredient
-- texture
-- format
-- target customer
-- retail price positioning
-- marketing angle
-
-===SPLIT_SECTION===
-
-SECTION 2 — DUTCH
-
-🌐 EUROPESE COSMETICA MARKT DAGRAPPORT
-
-1. 📈 TOP 5 TRENDSIGNALEN VANDAAG
-Voor elk:
-- trefwoord / ingrediënt
-- status
-- Trendscore
-- bewijs
-- commerciële interpretatie
-
-2. 💡 CEO INKOOP & MARKETING STRATEGIE
-Behandel:
-- Nederland
-- Duitsland
-- Arabisch / Midden-Oosten in Europa
-- K-Beauty
-
-3. 💄 VIRAAL PRODUCTCONCEPT
-Creëer één commercieel realistisch productconcept op basis van de sterkste signalen.
-Inclusief:
-- ingrediënt
-- textuur
-- formaat
-- doelgroep
-- verkoopprijs-positionering
-- marketinghoek
-
-===SPLIT_SECTION===
-
-SECTION 3 — GERMAN
-
-🌐 EUROPÄISCHER KOSMETIK-MARKT TAGESBERICHT
-
-1. 📈 TOP 5 TREND-SIGNALE HEUTE
-Für jedes:
-- Schlüsselwort / Inhaltsstoff
-- Status
-- Trend-Score
-- Beweis
-- kommerzielle Interpretation
-
-2. 💡 CEO-EINKAUFS- & MARKETING-STRATEGIE
-Abdecken:
-- Niederlande
-- Deutschland
-- Arabisch / Naher Osten in Europa
-- K-Beauty
-
-3. 💄 VIRALES PRODUKTKONZEPT
-Erstellen Sie ein kommerziell realistisches Produktkonzept basierend auf den stärksten Signalen.
-Enthalten:
-- Inhaltsstoff
-- Textur
-- Format
-- Zielgruppe
-- Verkaufspreis-Positionierung
-- Marketing-Ansatz
 """
 
     payload = {
@@ -1727,16 +1497,17 @@ Enthalten:
         ],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 4096
+            "maxOutputTokens": 8192
         }
     }
 
     try:
+        logging.info("Calling Gemini model: %s", GEMINI_MODEL)
         res = session.post(
             url,
             headers=headers,
             json=payload,
-            timeout=45
+            timeout=60
         )
 
         if res.status_code != 200:
@@ -1763,7 +1534,7 @@ Enthalten:
 
 
 # ============================================================
-# 15. Telegram Notification
+# 15. Telegram Notification (Markdown 제거로 메시지 깨짐 방지)
 # ============================================================
 
 def send_telegram_message(message: str):
@@ -1779,8 +1550,7 @@ def send_telegram_message(message: str):
     for chunk in chunks:
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
-            "text": chunk,
-            "parse_mode": "Markdown"
+            "text": chunk
         }
         try:
             res = session.post(url, json=payload, timeout=15)
@@ -1849,12 +1619,17 @@ def main():
             trend_summary=trend_summary_str
         )
 
-        # 7. Send Report via Telegram
+        # 7. Send Report via Telegram (한국어 -> 아랍어 -> 영어 순서 보장 분할 전송)
         logging.info("Sending report via Telegram...")
-        sections = report.split("===SPLIT_SECTION===")
-        for section in sections:
-            if section.strip():
-                send_telegram_message(section.strip())
+        sections = [
+            section.strip()
+            for section in report.split("===SPLIT_SECTION===")
+            if section.strip()
+        ]
+
+        for index, section in enumerate(sections):
+            logging.info("Sending report section %d/%d", index + 1, len(sections))
+            send_telegram_message(section)
 
         logging.info("=== Daily Cosmetics Trend Bot Completed Successfully ===")
 
