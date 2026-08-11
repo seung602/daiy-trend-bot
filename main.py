@@ -38,8 +38,10 @@ RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
-# 무료 RapidAPI 제한
-TIKTOK_DAILY_LIMIT = 3
+# tiktok-scraper7 (tikwm) 유료 플랜 실측 한도: 300 requests/month (hard limit),
+# 120 requests/minute. 월간 한도 기준 하루 9회로 고정한다 (9 * 31일 = 279 <= 300,
+# 재시도/여유분을 감안해 10이 아닌 9로 설정).
+TIKTOK_DAILY_LIMIT = 9
 TIKTOK_QUERY_COUNT = 50  # 요청 1회당 가져오는 최대 영상 수 (쿼터는 호출 수 기준이므로 부담 없음)
 
 # instagram-scraper2 (JoTucker) - 신규 대체 API. 파라미터 확정 후 아래 함수에서 사용.
@@ -89,29 +91,31 @@ AMAZON_QUERY_ROTATION = [
     ["skincare europe", "kbeauty europe", "anti aging europe"],
 ]
 
-# TikTok은 매일 3개만 사용하고, 날짜를 기준으로 검색군을 회전한다.
+# TikTok은 tiktok-scraper7 플랜 기준 300 calls/month(hard limit)이다.
+# 31일 기준으로도 한도를 넘지 않도록 하루 9회로 설정한다 (9 * 31 = 279 <= 300).
+# 하루 9개를 flat pool에서 sliding window로 순환 선택해 넓게 커버한다.
 TIKTOK_QUERY_ROTATION = [
-    ["skincare", "skincare routine", "beauty skincare"],
-    ["kbeauty", "korean skincare", "kbeauty routine"],
-    ["skincare ingredient", "viral skincare ingredient", "beauty ingredient"],
-    ["serum trend", "viral serum", "best serum"],
-    ["skin barrier", "barrier repair", "sensitive skin skincare"],
-    ["retinol skincare", "retinal skincare", "anti aging skincare"],
-    ["pdrn skincare", "polynucleotide skincare", "exosome skincare"],
-    ["peptide skincare", "collagen skincare", "firming skincare"],
-    ["niacinamide skincare", "vitamin c skincare", "brightening skincare"],
-    ["acne skincare", "blemish skincare", "pore care"],
-    ["hyperpigmentation", "dark spot skincare", "brightening serum"],
-    ["dry skin", "dehydrated skin", "hydrating skincare"],
-    ["sunscreen", "sun stick", "spf skincare"],
-    ["cica skincare", "centella skincare", "snail mucin"],
-    ["spicule skincare", "spicule serum", "skin booster"],
-    ["azelaic acid skincare", "salicylic acid skincare", "aha bha skincare"],
-    ["glass skin", "skin flooding", "skin cycling"],
-    ["slugging skincare", "skinimalism", "glowy skin"],
-    ["viral beauty", "trending beauty", "new skincare"],
-    ["skincare europe", "kbeauty europe", "beauty trends europe"],
-    ["skincare germany", "kbeauty germany", "beauty germany"],
+    "skincare", "skincare routine", "beauty skincare",
+    "kbeauty", "korean skincare", "kbeauty routine",
+    "skincare ingredient", "viral skincare ingredient", "beauty ingredient",
+    "serum trend", "viral serum", "best serum",
+    "skin barrier", "barrier repair", "sensitive skin skincare",
+    "retinol skincare", "retinal skincare", "anti aging skincare",
+    "pdrn skincare", "polynucleotide skincare", "exosome skincare",
+    "peptide skincare", "collagen skincare", "firming skincare",
+    "niacinamide skincare", "vitamin c skincare", "brightening skincare",
+    "acne skincare", "blemish skincare", "pore care",
+    "hyperpigmentation", "dark spot skincare", "brightening serum",
+    "dry skin", "dehydrated skin", "hydrating skincare",
+    "sunscreen", "sun stick", "spf skincare",
+    "cica skincare", "centella skincare", "snail mucin",
+    "spicule skincare", "spicule serum", "skin booster",
+    "azelaic acid skincare", "salicylic acid skincare", "aha bha skincare",
+    "glass skin", "skin flooding", "skin cycling",
+    "slugging skincare", "skinimalism", "glowy skin",
+    "viral beauty", "trending beauty", "new skincare",
+    "skincare europe", "kbeauty europe", "beauty trends europe",
+    "skincare germany", "kbeauty germany", "beauty germany",
 ]
 
 # Instagram은 하루 1개이므로 2주 rotation으로 넓게 탐색한다.
@@ -230,7 +234,22 @@ def rotation_index(length: int) -> int:
 
 
 def get_today_tiktok_queries() -> List[str]:
-    return TIKTOK_QUERY_ROTATION[rotation_index(len(TIKTOK_QUERY_ROTATION))]
+    """
+    하루 최대 TIKTOK_DAILY_LIMIT개의 검색어를 순환하며 수집한다.
+    TIKTOK_QUERY_ROTATION(flat pool) 중 오늘 시작 위치부터 연속으로 뽑아
+    넓게 커버한다 (Instagram 스크래퍼와 동일한 sliding window 방식).
+    """
+    n = len(TIKTOK_QUERY_ROTATION)
+    if n == 0:
+        return []
+
+    start = rotation_index(n)
+    count = min(TIKTOK_DAILY_LIMIT, n)
+
+    return [
+        TIKTOK_QUERY_ROTATION[(start + i) % n]
+        for i in range(count)
+    ]
 
 
 
@@ -700,7 +719,7 @@ def collect_google_independent_signals(
 
 
 # ============================================================
-# 9. TikTok - 하루 3 calls
+# 9. TikTok (tiktok-scraper7 / tikwm) - 하루 9 calls
 # ============================================================
 
 def fetch_tiktok_captions() -> List[Dict]:
@@ -708,13 +727,10 @@ def fetch_tiktok_captions() -> List[Dict]:
         logging.warning("RAPIDAPI_KEY missing. TikTok skipped.")
         return []
 
-    url = (
-        "https://tiktok-api23.p.rapidapi.com/"
-        "api/search/video"
-    )
+    url = "https://tiktok-scraper7.p.rapidapi.com/feed/search"
     headers = {
         "x-rapidapi-key": RAPIDAPI_KEY,
-        "x-rapidapi-host": "tiktok-api23.p.rapidapi.com"
+        "x-rapidapi-host": "tiktok-scraper7.p.rapidapi.com"
     }
 
     queries = get_today_tiktok_queries()[:TIKTOK_DAILY_LIMIT]
@@ -728,9 +744,12 @@ def fetch_tiktok_captions() -> List[Dict]:
                 url,
                 headers=headers,
                 params={
-                    "keyword": query,
+                    "keywords": query,
+                    "region": "us",
                     "count": str(TIKTOK_QUERY_COUNT),
-                    "cursor": "0"
+                    "cursor": "0",
+                    "publish_time": "0",
+                    "sort_type": "0"
                 },
                 timeout=15
             )
@@ -743,20 +762,30 @@ def fetch_tiktok_captions() -> List[Dict]:
                 continue
 
             data = res.json()
+
+            # tiktok-scraper7(tikwm) 정상 응답: {"code":0,"msg":"success","data":{"videos":[...]}}
+            # code != 0 이면 API 자체 에러(예: 쿼터 초과, 잘못된 파라미터)이므로 스킵한다.
+            if isinstance(data.get("code"), int) and data["code"] != 0:
+                logging.warning(
+                    "TikTok query '%s' API error code=%s msg=%s",
+                    query, data.get("code"), data.get("msg")
+                )
+                continue
+
             if isinstance(data.get("data"), list):
                 items = data["data"]
             elif isinstance(data.get("data"), dict):
                 items = (
-                    data["data"].get("item_list")
-                    or data["data"].get("videos")
+                    data["data"].get("videos")
+                    or data["data"].get("item_list")
                     or []
                 )
             else:
-                # 이 엔드포인트는 "data" 래핑 없이 item_list/videos를
-                # 최상위 필드로 바로 반환하는 경우가 있다 (2026-08-11 실측 확인).
+                # data 래핑 없이 최상위에 videos/item_list를 바로 반환하는
+                # 경우에 대한 방어적 처리.
                 items = (
-                    data.get("item_list")
-                    or data.get("videos")
+                    data.get("videos")
+                    or data.get("item_list")
                     or []
                 )
 
@@ -768,9 +797,11 @@ def fetch_tiktok_captions() -> List[Dict]:
                 )
 
             for item in items[:TIKTOK_QUERY_COUNT]:
+                # tikwm 계열은 캡션을 "title" 필드에 담는다.
+                # 혹시 다른 변형 스키마가 오더라도 대응하도록 desc도 함께 체크한다.
                 desc = (
-                    item.get("desc")
-                    or item.get("title")
+                    item.get("title")
+                    or item.get("desc")
                     or ""
                 )
 
@@ -1796,7 +1827,7 @@ Focus on:
 - commercial intent
 - which specific SKUs a small retailer could test-order now
 
-Do not overstate small samples. Today's TikTok maximum is 3 API calls,
+Do not overstate small samples. Today's TikTok maximum is 9 API calls,
 Amazon maximum is 3 API calls, and Instagram (Scraper2) maximum is
 10 API calls, so social sampling, while broader than before, is still
 not a full-population census.
