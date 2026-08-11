@@ -5,6 +5,7 @@ import json
 import sqlite3
 import logging
 import datetime
+import calendar
 import math
 from collections import Counter
 from typing import List, Dict, Tuple, Optional
@@ -42,9 +43,13 @@ TIKTOK_DAILY_LIMIT = 3
 TIKTOK_QUERY_COUNT = 50  # 요청 1회당 가져오는 최대 영상 수 (쿼터는 호출 수 기준이므로 부담 없음)
 
 # instagram-scraper2 (JoTucker) - 신규 대체 API. 파라미터 확정 후 아래 함수에서 사용.
+# RapidAPI BASIC 플랜 실측 한도: 10 requests/day (hard limit), 3 requests/minute.
+# 일일 한도를 그대로 다 쓰는 구조이므로, 분당 한도를 넘겨 429로 콜을 낭비하지 않도록
+# 호출 사이 간격을 반드시 20초 이상으로 유지해야 한다 (60초 / 3회 = 20초 + 여유 1초).
 INSTAGRAM_SCRAPER_ENABLED = True
 INSTAGRAM_SCRAPER_DAILY_LIMIT = 10
 INSTAGRAM_SCRAPER_QUERY_COUNT = 50
+INSTAGRAM_SCRAPER_CALL_INTERVAL_SEC = 21
 
 # Amazon은 "구매 전환 신호"로 활용한다 (SNS의 화제성 신호와 상호보완).
 AMAZON_DAILY_LIMIT = 3
@@ -749,6 +754,13 @@ def fetch_tiktok_captions() -> List[Dict]:
             else:
                 items = []
 
+            if not items:
+                logging.info(
+                    "TikTok query '%s' returned 0 items despite HTTP 200. "
+                    "Raw response (first 300 chars): %s",
+                    query, str(data)[:300]
+                )
+
             for item in items[:TIKTOK_QUERY_COUNT]:
                 desc = (
                     item.get("desc")
@@ -992,8 +1004,12 @@ def fetch_instagram_scraper_captions() -> List[Dict]:
                 tag, e
             )
 
+        # BASIC 플랜은 분당 3회 제한 + 일일 10회가 하드 리밋이라
+        # 여기서 429가 뜨면 그날의 호출 기회를 그냥 날리는 것과 같다.
+        # 반드시 20초 이상 간격을 두고, 리포트 발송(Gemini 호출) 전에
+        # 여유있게 끝나도록 한다.
         if tag_index < len(tags) - 1:
-            time.sleep(0.4)
+            time.sleep(INSTAGRAM_SCRAPER_CALL_INTERVAL_SEC)
 
     logging.info(
         "Instagram Scraper2 calls=%d/%d, count_per_call=%d, valid samples=%d",
@@ -1685,12 +1701,32 @@ If a Google value is NA, do not invent a number.
 """
 
     prompt = f"""
-You are the CEO and Head of Sourcing for a European cosmetics and skincare
-e-commerce platform based in the Netherlands.
+You are the owner-operator of a small, independent cosmetics and
+skincare RETAIL business (online shop, and/or a small physical store)
+based in the Netherlands. You are NOT a large distributor, wholesaler,
+or corporate sourcing department — you personally decide what to
+stock, test, and promote.
 
 Generate a DAILY COSMETICS & SKINCARE MARKET TREND REPORT.
 
 {data_status}
+
+RETAILER CONSTRAINTS (apply to ALL strategy/action recommendations):
+- Assume small order volumes: test-buying a handful of SKUs in small
+  batches (units, not pallets or containers), not bulk inventory
+  builds.
+- Do NOT recommend things only a large distributor/wholesaler could
+  do: exclusive supply contracts, brand-wide distribution rights,
+  warehouse-scale stock increases (e.g. "X% inventory increase"),
+  multi-country logistics networks, or B2B supply negotiations.
+- DO recommend things a small retailer can act on directly: which 1-3
+  specific SKUs/ingredients to test-order this week, how to merchandise
+  or bundle them, what to say in product descriptions or social posts,
+  pricing/promo ideas, and which trends to just watch (not buy yet).
+- Prefer concrete, small-scale next actions over abstract strategy
+  language ("strengthen brand partnerships" is not useful; "order a
+  small test batch of Anua Niacinamide 10% + TXA and feature it next
+  to your existing BHA toner" is useful).
 
 IMPORTANT DATA MODEL:
 1. TikTok = early viral/discovery signal.
@@ -1729,11 +1765,15 @@ LIVE SOCIAL SAMPLES:
 ANALYSIS TASK
 ========================================================
 
-Classify major signals into:
-- CONFIRMED TREND: cross-platform social signal + independent Google discovery support
-- EMERGING / VIRAL: strong social, weak or not-yet-confirmed Google
-- SEARCH-DRIVEN: strong Google, weak social
-- ESTABLISHED: persistent signal without unusual acceleration
+Internally assess each major signal against these evidence tiers, then
+express the result ONLY as a star rating (do not print the tier name):
+- ★★★ (강한 신호): cross-platform social signal AND independent Google
+  discovery support AND/OR Amazon purchase data all point the same way
+- ★★ (주목할 신호): only ONE strong source confirms it (either Google
+  search intent OR cross-platform social/Amazon), not yet cross-confirmed
+- ★ (초기/참고 신호): single weak data point, small sample, or a
+  persistent-but-flat signal without acceleration — worth watching,
+  not yet actionable for sourcing decisions
 
 For each major candidate, distinguish measured evidence from hypothesis.
 
@@ -1745,7 +1785,7 @@ Focus on:
 - ingredients
 - product formats
 - commercial intent
-- sourcing opportunities
+- which specific SKUs a small retailer could test-order now
 
 Do not overstate small samples. Today's TikTok maximum is 3 API calls,
 Amazon maximum is 3 API calls, and Instagram (Scraper2) maximum is
@@ -1770,15 +1810,24 @@ Do not include Dutch or German.
 Title: 🌐 글로벌 화장품 & 스킨케어 시장 데일리 트렌드 리포트
 
 1. 📈 오늘의 TOP 5 트렌드 시그널
-For every signal state its evidence type:
-[CONFIRMED], [EMERGING], [SEARCH-DRIVEN], or [ESTABLISHED].
+For every signal, put the star rating (★★★, ★★, or ★) right after
+the signal title on the same line, e.g.
+"① 여드름 & BHA/살리실산 모공 솔루션 ★★★".
+Do NOT use bracket labels like [CONFIRMED] anywhere in the output.
 
-2. 💡 CEO 소싱 & 마케팅 전략
-Focus on Netherlands/Western Europe, Germany, Arabic/Middle East,
-and K-Beauty.
+2. 💡 리테일러 소싱 & 마케팅 전략
+Small-retailer scale only (see RETAILER CONSTRAINTS). Name 1-3 concrete
+SKUs/ingredients worth a small test order this week, plus a simple
+merchandising or social content idea for each. Focus on Netherlands/
+Western Europe, Germany, Arabic/Middle East, and K-Beauty.
 
-3. 💄 바이럴 제품 컨셉
-Give commercially actionable product concepts.
+3. 💄 진열 & 번들 컨셉
+Do NOT propose developing a new private-label formulation (that is a
+manufacturer/brand-owner task, not a retailer task). Instead, propose
+a shelf/online-listing concept built from existing, sourceable
+products: e.g. how to bundle or display 2-3 real products around a
+theme, with a short customer-facing description a small shop could
+actually use.
 
 ===SPLIT_SECTION===
 
@@ -1786,11 +1835,12 @@ Give commercially actionable product concepts.
 Title: 🌐 التقرير اليومي العالمي لاتجاهات مستحضرات التجميل والعناية بالبشرة
 
 1. 📈 أهم 5 إشارات للاتجاهات اليوم
-Use the same evidence labels in English in parentheses.
+Put the star rating (★★★, ★★, or ★) right after each signal title,
+same as in the Korean section. Do NOT use bracket labels.
 
-2. 💡 استراتيجية التوريد والتسويق
+2. 💡 استراتيجية التوريد والتسويق لتاجر تجزئة صغير (لا شركات كبرى)
 
-3. 💄 مفهوم منتج تجاري
+3. 💄 مفهوم عرض وتجميع المنتجات (وليس تطوير منتج جديد)
 
 ===SPLIT_SECTION===
 
@@ -1798,11 +1848,14 @@ Use the same evidence labels in English in parentheses.
 Title: 🌐 GLOBAL COSMETICS & SKINCARE MARKET DAILY TREND REPORT
 
 1. 📈 TOP 5 TREND SIGNALS TODAY
-Use [CONFIRMED], [EMERGING], [SEARCH-DRIVEN], or [ESTABLISHED].
+Put the star rating (★★★, ★★, or ★) right after each signal title.
+Do NOT use bracket labels like [CONFIRMED].
 
-2. 💡 CEO SOURCING & MARKETING STRATEGY
+2. 💡 SMALL RETAILER SOURCING & MARKETING STRATEGY
+Small-retailer scale only (see RETAILER CONSTRAINTS) — same content
+as the Korean section, not a literal translation requirement.
 
-3. 💄 VIRAL PRODUCT CONCEPT
+3. 💄 SHELF & BUNDLE CONCEPT (not new-product development)
 """
 
     return call_gemini_api(prompt)
@@ -1819,6 +1872,25 @@ def is_weekly_summary_day() -> bool:
     return get_market_now().date().weekday() == WEEKLY_SUMMARY_WEEKDAY
 
 
+def is_monthly_summary_day() -> bool:
+    """그 달의 마지막 날에만 True (매일 도는 워크플로우 기준)."""
+    today = get_market_now().date()
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    return today.day == last_day
+
+
+def get_past_month_dates(signal_date: str) -> List[str]:
+    """
+    이번 달 1일부터 오늘(=월말)까지의 날짜 리스트를 반환한다.
+    주간 롤업과 달리 요일 제한 없이 그 달에 실제로 수집된 모든 날짜를 포함한다.
+    """
+    today = datetime.date.fromisoformat(signal_date)
+    first_day = today.replace(day=1)
+    days_in_month = (today - first_day).days + 1
+    return [
+        (first_day + datetime.timedelta(days=i)).isoformat()
+        for i in range(days_in_month)
+    ]
 def get_past_weekday_dates(signal_date: str) -> List[str]:
     """
     이번 주(월~금)의 날짜 리스트를 반환한다.
@@ -1978,6 +2050,181 @@ Title: 📅 WEEKLY COSMETICS & SKINCARE TREND ROLLUP ({date_list[0]} ~ {date_lis
 
 
 # ============================================================
+# 16c. Monthly Rollup (월말 요약)
+# ============================================================
+
+def build_monthly_rollup(date_list: List[str]) -> Tuple[str, str]:
+    """
+    trend_scores와 keyword_daily를 월 단위로 집계해서
+    (키워드 랭킹 텍스트, 플랫폼별 집계 텍스트) 튜플로 반환한다.
+    build_weekly_rollup과 동일한 구조이지만 집계 기간이 그 달 전체이고,
+    상위 30개까지 보여준다 (월간은 노출 후보가 더 많을 수 있어서).
+    """
+    if not date_list:
+        return "No data.", "No data."
+
+    conn = get_db()
+    placeholders = ",".join("?" for _ in date_list)
+    total_days = len(date_list)
+
+    keyword_rows = conn.execute(f"""
+        SELECT
+            keyword,
+            SUM(trend_score) AS total_score,
+            AVG(trend_score) AS avg_score,
+            MAX(trend_score) AS peak_score,
+            COUNT(DISTINCT signal_date) AS active_days
+        FROM trend_scores
+        WHERE signal_date IN ({placeholders})
+        GROUP BY keyword
+        ORDER BY total_score DESC
+        LIMIT 30
+    """, date_list).fetchall()
+
+    platform_rows = conn.execute(f"""
+        SELECT
+            platform,
+            SUM(mentions) AS total_mentions,
+            COUNT(DISTINCT keyword) AS unique_keywords
+        FROM keyword_daily
+        WHERE signal_date IN ({placeholders})
+        GROUP BY platform
+        ORDER BY total_mentions DESC
+    """, date_list).fetchall()
+
+    conn.close()
+
+    keyword_lines = []
+    for row in keyword_rows:
+        keyword_lines.append(
+            f"- {row['keyword']}: "
+            f"avg_score={row['avg_score']:.1f}, "
+            f"peak_score={row['peak_score']:.1f}, "
+            f"active_days={row['active_days']}/{total_days}"
+        )
+
+    platform_lines = []
+    for row in platform_rows:
+        platform_lines.append(
+            f"- {row['platform']}: "
+            f"mentions={row['total_mentions']}, "
+            f"unique_keywords={row['unique_keywords']}"
+        )
+
+    keyword_text = (
+        "\n".join(keyword_lines)
+        if keyword_lines
+        else "No monthly keyword data."
+    )
+    platform_text = (
+        "\n".join(platform_lines)
+        if platform_lines
+        else "No monthly platform data."
+    )
+
+    return keyword_text, platform_text
+
+
+def generate_monthly_summary_report(
+    date_list: List[str],
+    keyword_rollup: str,
+    platform_rollup: str
+) -> str:
+    total_days = len(date_list)
+
+    prompt = f"""
+You are the owner-operator of a small, independent cosmetics and
+skincare RETAIL business (online shop, and/or a small physical store)
+based in the Netherlands. You are NOT a large distributor, wholesaler,
+or corporate sourcing department.
+
+Generate a MONTHLY COSMETICS & SKINCARE MARKET ROLLUP covering
+{date_list[0]} to {date_list[-1]} ({total_days} days), based on
+aggregated quantitative trend scores collected across the whole month.
+
+RETAILER CONSTRAINTS (apply to ALL recommendations):
+- Assume small order volumes: a handful of SKUs per restock, not bulk
+  container-scale inventory.
+- Do NOT recommend exclusive supply contracts, brand-wide distribution
+  rights, warehouse-scale stock increases, or B2B-only moves.
+- DO recommend concrete next-month actions a small retailer can take:
+  which ingredients/SKUs to keep stocking, which to phase out, which
+  new ones to test, and simple merchandising/content ideas.
+
+MONTHLY KEYWORD RANKING (by aggregated trend_score, {total_days}-day window):
+{keyword_rollup}
+
+MONTHLY PLATFORM BREAKDOWN (TikTok / Amazon / Instagram / Google):
+{platform_rollup}
+
+========================================================
+ANALYSIS TASK
+========================================================
+
+Summarize the month's overall direction:
+- Which keywords held the strongest, most persistent signal across
+  the WHOLE month (high active_days relative to {total_days}, not
+  just a few good days)? These are the highest-confidence candidates
+  for an actual restock or new-SKU decision.
+- Which platform contributed the most this month, and what does that
+  imply (Amazon-heavy = purchase-stage signal already converting,
+  TikTok-heavy = early viral signal still unproven commercially)?
+- Which keywords spiked briefly but did not persist across the month
+  (low active_days relative to {total_days}, high peak_score) — flag
+  these as noise/hype, not a trend worth committing budget to.
+- Note any keyword that looks like it is fading (was strong earlier
+  in the data, weak recently) versus accelerating (weak earlier,
+  strong recently), if the data supports that read. Do not invent a
+  trajectory the data does not show.
+
+Do not overstate small samples. Be honest about data limitations —
+this is still free-tier API sampling, not a full-population census.
+
+========================================================
+STRICT LANGUAGE & ORDER RULES
+========================================================
+
+The report MUST contain exactly THREE sections separated by
+===SPLIT_SECTION===, in this order: KOREAN, ARABIC, ENGLISH.
+Do not include Dutch or German.
+
+--- SECTION 1 ---
+Title: 🗓️ 월간 화장품 & 스킨케어 트렌드 요약 ({date_list[0]} ~ {date_list[-1]})
+
+1. 🏆 이달의 TOP 5 지속 트렌드 (별점 ★★★/★★/★ 로 신뢰도 표시)
+2. 📊 플랫폼별 기여도 분석
+3. 📉 반짝 스파이크였던 노이즈 키워드
+4. 📈 상승세 vs 하락세 키워드 (데이터로 확인되는 경우만)
+5. 💡 다음 달 리테일러 소싱/진열 제안 (소규모 리테일러 기준, 대량 발주·독점계약 제안 금지)
+
+===SPLIT_SECTION===
+
+--- SECTION 2 ---
+Title: 🗓️ ملخص شهري لاتجاهات مستحضرات التجميل والعناية بالبشرة
+
+1. 🏆 أفضل 5 اتجاهات مستمرة هذا الشهر (تقييم بالنجوم ★★★/★★/★)
+2. 📊 تحليل مساهمة كل منصة
+3. 📉 كلمات مفتاحية كانت ضجة مؤقتة فقط
+4. 📈 اتجاهات صاعدة مقابل اتجاهات هابطة
+5. 💡 اقتراحات التوريد والعرض للشهر القادم (لتاجر تجزئة صغير فقط)
+
+===SPLIT_SECTION===
+
+--- SECTION 3 ---
+Title: 🗓️ MONTHLY COSMETICS & SKINCARE TREND ROLLUP ({date_list[0]} ~ {date_list[-1]})
+
+1. 🏆 TOP 5 PERSISTENT TRENDS THIS MONTH (star rating ★★★/★★/★)
+2. 📊 PLATFORM CONTRIBUTION ANALYSIS
+3. 📉 KEYWORDS THAT LOOK LIKE BRIEF NOISE/HYPE
+4. 📈 RISING VS FADING KEYWORDS (only if the data supports it)
+5. 💡 NEXT MONTH SOURCING/MERCHANDISING SUGGESTIONS (small-retailer
+   scale only — no bulk orders or exclusive contracts)
+"""
+
+    return call_gemini_api(prompt)
+
+
+# ============================================================
 # 17. Telegram
 # ============================================================
 
@@ -2053,6 +2300,12 @@ def main():
         google_data = collect_google_independent_signals(
             signal_date, regions
         )
+
+        for region, items in google_data.items():
+            logging.info(
+                "Google autocomplete accepted signals [%s]: %d",
+                region, len(items)
+            )
 
         # Daily general RSS는 보조적인 시장 context로만 저장
         google_nl_rss = fetch_google_daily_rss("NL", 15)
@@ -2209,6 +2462,49 @@ def main():
                 )
                 send_telegram_error(
                     f"Weekly rollup failed: {str(e)} "
+                    "(daily report was sent successfully)"
+                )
+
+        # ----------------------------------------------------
+        # 9. Monthly rollup (매월 말일에만 추가 발송, 데이터 수집은 계속됨)
+        # ----------------------------------------------------
+        if is_monthly_summary_day():
+            try:
+                logging.info(
+                    "Today is the monthly summary day - "
+                    "building monthly rollup..."
+                )
+
+                month_dates = get_past_month_dates(signal_date)
+                keyword_rollup, platform_rollup = build_monthly_rollup(
+                    month_dates
+                )
+
+                monthly_report = generate_monthly_summary_report(
+                    month_dates, keyword_rollup, platform_rollup
+                )
+
+                monthly_sections = [
+                    section.strip()
+                    for section
+                    in monthly_report.split("===SPLIT_SECTION===")
+                    if section.strip()
+                ]
+
+                for index, section in enumerate(monthly_sections):
+                    logging.info(
+                        "Sending monthly report section %d/%d",
+                        index + 1, len(monthly_sections)
+                    )
+                    send_telegram_message(section)
+
+            except Exception as e:
+                logging.error(
+                    "Monthly rollup failed (daily report already sent): %s",
+                    e, exc_info=True
+                )
+                send_telegram_error(
+                    f"Monthly rollup failed: {str(e)} "
                     "(daily report was sent successfully)"
                 )
 
