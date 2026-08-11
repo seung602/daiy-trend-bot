@@ -802,8 +802,9 @@ def fetch_tiktok_captions() -> List[Dict]:
                 query, e
             )
 
-        if query_index < len(queries) - 1:
-            time.sleep(0.5)
+        finally:
+            if query_index < len(queries) - 1:
+                time.sleep(0.5)
 
     logging.info(
         "TikTok calls=%d/%d, count_per_call=%d, valid samples=%d",
@@ -1010,12 +1011,14 @@ def fetch_instagram_scraper_captions() -> List[Dict]:
                 tag, e
             )
 
-        # BASIC 플랜은 분당 3회 제한 + 일일 10회가 하드 리밋이라
-        # 여기서 429가 뜨면 그날의 호출 기회를 그냥 날리는 것과 같다.
-        # 반드시 20초 이상 간격을 두고, 리포트 발송(Gemini 호출) 전에
-        # 여유있게 끝나도록 한다.
-        if tag_index < len(tags) - 1:
-            time.sleep(INSTAGRAM_SCRAPER_CALL_INTERVAL_SEC)
+        finally:
+            # 위 try 블록 안에 continue가 있어도 finally는 항상 실행된다.
+            # BASIC 플랜은 분당 3회 제한 + 일일 10회가 하드 리밋이라
+            # 여기서 429가 뜨면 그날의 호출 기회를 그냥 날리는 것과 같다.
+            # 반드시 20초 이상 간격을 두고, 리포트 발송(Gemini 호출) 전에
+            # 여유있게 끝나도록 한다.
+            if tag_index < len(tags) - 1:
+                time.sleep(INSTAGRAM_SCRAPER_CALL_INTERVAL_SEC)
 
     logging.info(
         "Instagram Scraper2 calls=%d/%d, count_per_call=%d, valid samples=%d",
