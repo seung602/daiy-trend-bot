@@ -1,71 +1,70 @@
-name: K-Beauty Daily Trend Report
+name: Daily Cosmetics Trend Report
 
 on:
-  # GitHub Actions uses UTC. We trigger at both 05:00 and 06:00 UTC
-  # and keep only the run that is exactly 07:00 in Europe/Amsterdam.
-  # 05:00 UTC = 07:00 CEST (summer)
-  # 06:00 UTC = 07:00 CET  (winter)
   schedule:
-    - cron: '0 5,6 * * *'
+    # GitHub Actions는 UTC 기준
+    # 여름시간(CEST): 05:00 UTC = 암스테르담 07:00
+    - cron: "0 5 * * *"
+
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   daily-report:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      # 1. Repository checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check Amsterdam time
-        id: local_time
-        shell: bash
-        run: |
-          HOUR="$(TZ=Europe/Amsterdam date +%H)"
-          echo "Amsterdam local hour: ${HOUR}"
-          if [ "${HOUR}" = "07" ]; then
-            echo "run_report=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run_report=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # SQLite contains both the 7-day trend history and the monthly API quota ledger.
-      # Restore the newest cache entry from the same branch before running.
-      - name: Restore trend database
-        if: steps.local_time.outputs.run_report == 'true'
-        uses: actions/cache/restore@v4
-        with:
-          path: beauty_trends.db
-          key: kbeauty-db-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            kbeauty-db-${{ github.ref_name }}-
-
+      # 2. Python
       - name: Set up Python
-        if: steps.local_time.outputs.run_report == 'true'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
+          cache: "pip"
 
+      # 3. Install dependencies
       - name: Install dependencies
-        if: steps.local_time.outputs.run_report == 'true'
-        run: python -m pip install --upgrade pip requests
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install requests urllib3
+          fi
 
-      - name: Run K-Beauty daily report
-        if: steps.local_time.outputs.run_report == 'true'
+      # 4. Run Daily Trend Bot
+      - name: Run Daily Trend Bot
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main_kbeauty_final.py
+          RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          TREND_DB_PATH: beauty_trends.db
+        run: |
+          echo "========================================"
+          echo "Starting Daily Cosmetics Trend Bot"
+          echo "========================================"
 
-      # Every successful run gets a fresh cache key, so the next day's restore-key
-      # finds the latest database. This preserves monthly quota and 7-day history.
-      - name: Save trend database
-        if: steps.local_time.outputs.run_report == 'true' && success()
-        uses: actions/cache/save@v4
-        with:
-          path: beauty_trends.db
-          key: kbeauty-db-${{ github.ref_name }}-${{ github.run_id }}
+          python main_kbeauty_final.py
+
+      # 5. Save SQLite database
+      - name: Commit database changes
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add beauty_trends.db
+
+          if git diff --cached --quiet; then
+            echo "No database changes to commit."
+          else
+            git commit -m "Update daily trend database"
+            git push
+          fi
