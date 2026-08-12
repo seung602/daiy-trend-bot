@@ -56,15 +56,19 @@ jobs:
         with:
           python-version: '3.12'
 
+      # apify-client 라이브러리는 스크립트에서 import하지 않음(Apify는 requests로
+      # 직접 REST 호출). 안 쓰는 패키지라 설치 목록에서 제거.
       - name: Install dependencies
         if: steps.local_time.outputs.run_report == 'true'
-        run: python -m pip install --upgrade pip requests apify-client
+        run: python -m pip install --upgrade pip requests
 
       - name: Run K-Beauty daily report
         if: steps.local_time.outputs.run_report == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-1.5-flash
+          # gemini-1.5-flash는 404를 반환해 매번 코드의 폴백(gemini-3.5-flash-lite)
+          # 재시도를 태우고 있었다. 처음부터 정상 동작이 확인된 모델로 되돌린다.
+          GEMINI_MODEL: gemini-3.6-flash
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
