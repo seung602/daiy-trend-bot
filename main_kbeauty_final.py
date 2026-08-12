@@ -71,6 +71,12 @@ K_SIGNAL_FETCH_LIMIT = 50
 K_SIGNAL_MIN_CONFIDENCE = 0.5
 K_SIGNAL_TEASER_ENABLED = False
 K_SIGNAL_TEASER_MAX_MONTHLY = 19
+# 기존 timeout=8은 실측 응답 시간(15초 근처)보다 짧아 매번 Read timed out으로
+# 실패했다. GitHub Actions 잡 전체 시간에는 여유가 있으므로 25초로 늘려
+# 정상 응답을 받을 확률을 높인다. reserve_provider_call은 호출 전에 이미
+# quota를 차감하므로(= RapidAPI 쪽에서도 요청 자체는 처리 중이었을 가능성이 큼),
+# 타임아웃을 늘려 "호출은 셌는데 데이터는 못 받는" 낭비를 줄이는 게 목적이다.
+K_SIGNAL_TIMEOUT_SECONDS = 25
 
 AMAZON_QUERY_ROTATION = [
     # Category / product discovery
@@ -1087,7 +1093,7 @@ def fetch_k_signal() -> List[Dict]:
     url="https://k-signal-korea-beauty-fashion-velocity-feed.p.rapidapi.com/v1/signals"
     headers={"x-rapidapi-key":RAPIDAPI_KEY,"x-rapidapi-host":"k-signal-korea-beauty-fashion-velocity-feed.p.rapidapi.com"}
     try:
-        res=k_signal_session.get(url,headers=headers,params={"limit":str(K_SIGNAL_FETCH_LIMIT),"min_confidence":str(K_SIGNAL_MIN_CONFIDENCE)},timeout=8)
+        res=k_signal_session.get(url,headers=headers,params={"limit":str(K_SIGNAL_FETCH_LIMIT),"min_confidence":str(K_SIGNAL_MIN_CONFIDENCE)},timeout=K_SIGNAL_TIMEOUT_SECONDS)
         if res.status_code!=200:
             logging.warning("K-Signal /signals HTTP %s: %s",res.status_code,res.text[:300])
             return []
@@ -1264,7 +1270,12 @@ def fetch_instagram_apify() -> List[Dict]:
             params={"token": APIFY_TOKEN},
             timeout=120
         )
-        if res.status_code != 200:
+        # Apify의 run-sync-get-dataset-items 엔드포인트는 정상 처리 시에도
+        # 200이 아니라 201을 반환하는 경우가 있다(실제 로그에서 201 + 정상
+        # dataset JSON이 함께 온 사례 확인). 200만 성공으로 인정하면 정상
+        # 수집분까지 버려지고, 이미 청구된 Apify 비용만 낭비된다. 2xx 전체를
+        # 성공으로 간주하고, 실패는 4xx/5xx만으로 판단한다.
+        if not (200 <= res.status_code < 300):
             logging.warning(
                 "Apify Instagram HTTP %s: %s",
                 res.status_code, res.text[:500]
