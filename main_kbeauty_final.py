@@ -71,12 +71,13 @@ K_SIGNAL_FETCH_LIMIT = 50
 K_SIGNAL_MIN_CONFIDENCE = 0.5
 K_SIGNAL_TEASER_ENABLED = False
 K_SIGNAL_TEASER_MAX_MONTHLY = 19
-# 기존 timeout=8은 실측 응답 시간(15초 근처)보다 짧아 매번 Read timed out으로
-# 실패했다. GitHub Actions 잡 전체 시간에는 여유가 있으므로 25초로 늘려
+# 기존 timeout=8 -> 25초로 올렸는데도 실측 응답이 25초를 넘는 날이 있어
+# 여전히 Read timed out이 발생했다(2026-08-12 07:57 실행 로그: read timeout=25
+# 로 실패). GitHub Actions 잡 전체 시간에는 여유가 있으므로 45초로 더 늘려
 # 정상 응답을 받을 확률을 높인다. reserve_provider_call은 호출 전에 이미
 # quota를 차감하므로(= RapidAPI 쪽에서도 요청 자체는 처리 중이었을 가능성이 큼),
 # 타임아웃을 늘려 "호출은 셌는데 데이터는 못 받는" 낭비를 줄이는 게 목적이다.
-K_SIGNAL_TIMEOUT_SECONDS = 25
+K_SIGNAL_TIMEOUT_SECONDS = 45
 
 AMAZON_QUERY_ROTATION = [
     # Category / product discovery
