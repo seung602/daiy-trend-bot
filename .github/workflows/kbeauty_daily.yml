@@ -24,12 +24,19 @@ jobs:
         id: local_time
         shell: bash
         run: |
-          HOUR="$(TZ=Europe/Amsterdam date +%H)"
-          echo "Amsterdam local hour: ${HOUR}"
-          if [ "${HOUR}" = "07" ]; then
+          # 수동 실행(workflow_dispatch)인 경우 시간 검사 없이 항상 실행
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual trigger detected. Running report regardless of time."
             echo "run_report=true" >> "$GITHUB_OUTPUT"
           else
-            echo "run_report=false" >> "$GITHUB_OUTPUT"
+            # 자동 예약 실행(schedule)인 경우 암스테르담 기준 07시일 때만 실행
+            HOUR="$(TZ=Europe/Amsterdam date +%H)"
+            echo "Amsterdam local hour: ${HOUR}"
+            if [ "${HOUR}" = "07" ]; then
+              echo "run_report=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run_report=false" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       # SQLite contains both the 7-day trend history and the monthly API quota ledger.
@@ -51,14 +58,13 @@ jobs:
 
       - name: Install dependencies
         if: steps.local_time.outputs.run_report == 'true'
-        run: python -m pip install --upgrade pip requests
+        run: python -m pip install --upgrade pip requests apify-client
 
       - name: Run K-Beauty daily report
         if: steps.local_time.outputs.run_report == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # 빈 값으로 GEMINI_MODEL을 덮어써 404가 나는 문제를 방지한다.
-          GEMINI_MODEL: gemini-3.6-flash
+          GEMINI_MODEL: gemini-1.5-flash
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
