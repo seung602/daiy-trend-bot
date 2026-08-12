@@ -51,12 +51,14 @@ jobs:
 
       - name: Install dependencies
         if: steps.local_time.outputs.run_report == 'true'
-        run: python -m pip install --upgrade pip requests apify-client
+        run: python -m pip install --upgrade pip requests
 
       - name: Run K-Beauty daily report
         if: steps.local_time.outputs.run_report == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # 빈 값으로 GEMINI_MODEL을 덮어써 404가 나는 문제를 방지한다.
+          GEMINI_MODEL: gemini-3.6-flash
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
