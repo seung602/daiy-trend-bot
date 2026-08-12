@@ -1,0 +1,71 @@
+name: K-Beauty Daily Trend Report
+
+on:
+  # GitHub Actions uses UTC. We trigger at both 05:00 and 06:00 UTC
+  # and keep only the run that is exactly 07:00 in Europe/Amsterdam.
+  # 05:00 UTC = 07:00 CEST (summer)
+  # 06:00 UTC = 07:00 CET  (winter)
+  schedule:
+    - cron: '0 5,6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  daily-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Amsterdam time
+        id: local_time
+        shell: bash
+        run: |
+          HOUR="$(TZ=Europe/Amsterdam date +%H)"
+          echo "Amsterdam local hour: ${HOUR}"
+          if [ "${HOUR}" = "07" ]; then
+            echo "run_report=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_report=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # SQLite contains both the 7-day trend history and the monthly API quota ledger.
+      # Restore the newest cache entry from the same branch before running.
+      - name: Restore trend database
+        if: steps.local_time.outputs.run_report == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: beauty_trends.db
+          key: kbeauty-db-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            kbeauty-db-${{ github.ref_name }}-
+
+      - name: Set up Python
+        if: steps.local_time.outputs.run_report == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        if: steps.local_time.outputs.run_report == 'true'
+        run: python -m pip install --upgrade pip requests
+
+      - name: Run K-Beauty daily report
+        if: steps.local_time.outputs.run_report == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main_kbeauty_final.py
+
+      # Every successful run gets a fresh cache key, so the next day's restore-key
+      # finds the latest database. This preserves monthly quota and 7-day history.
+      - name: Save trend database
+        if: steps.local_time.outputs.run_report == 'true' && success()
+        uses: actions/cache/save@v4
+        with:
+          path: beauty_trends.db
+          key: kbeauty-db-${{ github.ref_name }}-${{ github.run_id }}
