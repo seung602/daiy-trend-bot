@@ -58,6 +58,7 @@ TIKTOK_QUERY_COUNT = 50  # 요청 1회당 가져오는 최대 영상 수 (쿼터
 # 태그당 12건(5개 태그 x 12 = 60) 목표.
 APIFY_INSTAGRAM_ENABLED = True
 APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT = 1800
+APIFY_INSTAGRAM_DAILY_RESULT_LIMIT = 60
 APIFY_INSTAGRAM_ACTOR = "apify/instagram-scraper"
 
 # Amazon은 "구매 전환 신호"로 활용한다 (SNS의 화제성 신호와 상호보완).
@@ -296,10 +297,13 @@ def rotation_index(length: int) -> int:
 def get_today_tiktok_queries() -> List[str]:
     """
     하루 최대 TIKTOK_DAILY_LIMIT개의 검색어를 순환하며 수집한다.
-    TIKTOK_QUERY_ROTATION(flat pool) 중 오늘 시작 위치부터 연속으로 뽑아
-    넓게 커버한다 (Instagram 스크래퍼와 동일한 sliding window 방식).
+    고정 TIKTOK_QUERY_ROTATION(70%)에 이번 주 동적 후보 풀(30%)을 섞은
+    하이브리드 풀에서, 오늘 시작 위치부터 연속으로 뽑아 넓게 커버한다.
     """
-    n = len(TIKTOK_QUERY_ROTATION)
+    hybrid_pool = interleave_hybrid_expand(
+        TIKTOK_QUERY_ROTATION, get_weekly_dynamic_pool()
+    )
+    n = len(hybrid_pool)
     if n == 0:
         return []
 
@@ -307,14 +311,14 @@ def get_today_tiktok_queries() -> List[str]:
     count = min(TIKTOK_DAILY_LIMIT, n)
 
     return [
-        TIKTOK_QUERY_ROTATION[(start + i) % n]
+        hybrid_pool[(start + i) % n]
         for i in range(count)
     ]
 
 
 
 def get_today_instagram_tag() -> str:
-    """Instagram Statistics API: 하루 1개 tag를 순환한다."""
+    """Instagram Statistics API: 하루 1개 tag를 순환한다. (현재 미사용 - Apify 경로가 실제 사용됨)"""
     if not INSTAGRAM_ROTATION:
         return "kbeauty"
     return INSTAGRAM_ROTATION[rotation_index(len(INSTAGRAM_ROTATION))]
@@ -350,6 +354,200 @@ def get_today_google_seeds(limit: int = 12) -> List[str]:
         unique[(start + i) % len(unique)]
         for i in range(min(limit, len(unique)))
     ]
+
+
+# ============================================================
+# 2b. 동적 하이브리드 태그 파이프라인 (고정 70% + 동적 30%)
+# ============================================================
+#
+# 아이디어: 우리가 이미 매일 수집하는 Google 자동완성 candidate와
+# (TikTok/Instagram/YouTube가 다 같이 합류하는) trend_scores의
+# velocity 상승 키워드를 "그 주의 신규 후보 풀"로 뽑아서,
+# 기존 고정 rotation 리스트에 섞어 넣는다.
+#
+# - 캐시 단위: ISO 주(월요일 시작). 같은 주 안에서는 동일한 동적 풀을
+#   재사용한다 (매일 다시 뽑으면 sliding-window 커버리지가 흔들림).
+# - TikTok/Instagram: 하루 호출 수(TIKTOK_DAILY_LIMIT=9, Instagram=1개)가
+#   풀 크기와 무관하게 고정돼 있으므로, 풀 자체를 "확장"해서 섞는다
+#   (interleave_hybrid_expand). 예산에 영향 없음.
+# - YouTube: 매일 풀 전체를 다 검색하므로(96 calls/day 예산이 풀 크기에
+#   비례), 풀 크기를 그대로 유지한 채 30%만 동적 키워드로 "교체"한다
+#   (replace_hybrid_fixed_size). 예산 불변.
+
+DYNAMIC_POOL_RATIO = 0.30
+DYNAMIC_POOL_MAX_SIZE = 40
+DYNAMIC_CANDIDATE_MIN_TIMES_SEEN = 2      # google_candidates 최소 재등장 횟수
+DYNAMIC_CANDIDATE_LOOKBACK_DAYS = 14      # trend_scores 조회 기간
+
+
+def get_iso_week_id() -> str:
+    """ISO 연-주 문자열, 예: '2026-W33'. 월요일 기준으로 주가 바뀐다."""
+    year, week, _ = get_market_now().date().isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def build_dynamic_keyword_pool(limit: int = DYNAMIC_POOL_MAX_SIZE) -> List[str]:
+    """
+    Google 자동완성에서 반복적으로 잡힌 candidate + 최근 2주간
+    trend_scores에서 velocity가 상승세(EMERGING/RISING 임계치 이상)였던
+    키워드를 합쳐서 "이번 주 동적 후보 풀"의 원재료를 만든다.
+    """
+    conn = get_db()
+    today = get_market_now().date()
+    lookback_start = (
+        today - datetime.timedelta(days=DYNAMIC_CANDIDATE_LOOKBACK_DAYS)
+    ).isoformat()
+
+    candidate_rows = conn.execute("""
+        SELECT keyword, times_seen
+        FROM google_candidates
+        WHERE times_seen >= ?
+        ORDER BY times_seen DESC, last_seen DESC
+        LIMIT ?
+    """, (DYNAMIC_CANDIDATE_MIN_TIMES_SEEN, limit * 2)).fetchall()
+
+    # calculate_trend_status와 동일한 임계치(EMERGING: velocity>=0.10)를
+    # 재사용해서, "최근 2주 안에 한 번이라도 상승세였던 키워드"를 뽑는다.
+    # (trend_scores에는 status 컬럼이 없어서 velocity_score로 근사한다.)
+    trend_rows = conn.execute("""
+        SELECT keyword, MAX(velocity_score) AS peak_velocity
+        FROM trend_scores
+        WHERE signal_date >= ?
+        GROUP BY keyword
+        HAVING peak_velocity >= 0.10
+        ORDER BY peak_velocity DESC
+        LIMIT ?
+    """, (lookback_start, limit * 2)).fetchall()
+
+    conn.close()
+
+    pool = []
+    seen_lower = set()
+
+    for row in list(candidate_rows) + list(trend_rows):
+        kw = (row["keyword"] or "").strip()
+        if not kw:
+            continue
+        kw_lower = kw.lower()
+        if kw_lower in seen_lower:
+            continue
+        if len(kw) < 3:
+            continue
+        if not is_beauty_relevant(kw):
+            continue
+        seen_lower.add(kw_lower)
+        pool.append(kw)
+        if len(pool) >= limit:
+            break
+
+    return pool
+
+
+def get_weekly_dynamic_pool(limit: int = DYNAMIC_POOL_MAX_SIZE) -> List[str]:
+    """
+    이번 주(ISO 주 기준)의 동적 후보 풀을 반환한다.
+    이미 이번 주에 계산해둔 게 있으면 그걸 재사용하고,
+    없으면 새로 계산해서 캐시한다.
+    """
+    week_id = get_iso_week_id()
+    conn = get_db()
+
+    row = conn.execute(
+        "SELECT keywords_json FROM weekly_dynamic_pool WHERE week_id = ?",
+        (week_id,)
+    ).fetchone()
+
+    if row:
+        conn.close()
+        try:
+            return json.loads(row["keywords_json"])
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    pool = build_dynamic_keyword_pool(limit)
+
+    conn.execute("""
+        INSERT INTO weekly_dynamic_pool (week_id, keywords_json, created_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(week_id) DO NOTHING
+    """, (week_id, json.dumps(pool), get_market_now().isoformat()))
+    conn.commit()
+    conn.close()
+
+    logging.info(
+        "Weekly dynamic keyword pool built for %s: %d candidates -> %s",
+        week_id, len(pool), pool[:10]
+    )
+
+    return pool
+
+
+def interleave_hybrid_expand(
+    fixed: List[str],
+    dynamic: List[str],
+    ratio: float = DYNAMIC_POOL_RATIO
+) -> List[str]:
+    """
+    TikTok/Instagram처럼 '하루에 뽑는 개수'가 풀 크기와 무관하게 고정된
+    경우에 쓴다. 고정 풀은 그대로 두고, 동적 키워드를 골고루 끼워 넣어서
+    풀 자체를 키운다 -> 일일 호출 예산에는 영향 없음.
+    """
+    fixed_lower = {f.lower() for f in fixed}
+    dynamic_filtered = [d for d in dynamic if d.lower() not in fixed_lower]
+
+    if not dynamic_filtered or not fixed:
+        return list(fixed)
+
+    # fixed : dynamic 비율이 (1-ratio) : ratio 가 되도록 동적 후보 개수를 정한다.
+    target_dynamic_count = max(
+        1, round(len(fixed) * ratio / (1 - ratio))
+    )
+    dynamic_selected = dynamic_filtered[:target_dynamic_count]
+
+    spacing = max(1, round(len(fixed) / len(dynamic_selected)))
+
+    result = []
+    di = 0
+    for idx, kw in enumerate(fixed):
+        result.append(kw)
+        if di < len(dynamic_selected) and (idx + 1) % spacing == 0:
+            result.append(dynamic_selected[di])
+            di += 1
+
+    result.extend(dynamic_selected[di:])
+    return result
+
+
+def replace_hybrid_fixed_size(
+    fixed: List[str],
+    dynamic: List[str],
+    ratio: float = DYNAMIC_POOL_RATIO
+) -> List[str]:
+    """
+    YouTube처럼 '풀 전체를 매일 다 쓰는' 경우에 쓴다. 호출 예산이 풀
+    크기에 비례하므로, 풀 크기는 그대로 유지한 채 ratio만큼의 자리를
+    동적 키워드로 교체한다 (매주 동일하게 유지 -> 같은 주 안에서는
+    호출 예산이 완전히 고정된다).
+    """
+    fixed_lower = {f.lower() for f in fixed}
+    dynamic_filtered = [d for d in dynamic if d.lower() not in fixed_lower]
+
+    if not dynamic_filtered or not fixed:
+        return list(fixed)
+
+    replace_count = min(
+        len(dynamic_filtered),
+        max(1, round(len(fixed) * ratio))
+    )
+
+    result = list(fixed)
+    spacing = max(1, len(result) // replace_count)
+
+    for i in range(replace_count):
+        idx = min((i + 1) * spacing - 1, len(result) - 1)
+        result[idx] = dynamic_filtered[i]
+
+    return result
 
 
 # ============================================================
@@ -472,6 +670,17 @@ def init_database():
             calls INTEGER NOT NULL DEFAULT 0,
             last_called_at TEXT,
             PRIMARY KEY (usage_month, provider, endpoint)
+        )
+    """)
+
+    # 하이브리드 동적 태그 파이프라인: 그 주에 뽑힌 "동적 30%" 후보를
+    # 주 단위로 고정 캐시해서, 같은 주 안에서는 매일 같은 풀을 쓰도록 한다
+    # (매일 다시 뽑으면 sliding window 커버리지가 흔들린다).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS weekly_dynamic_pool (
+            week_id TEXT PRIMARY KEY,
+            keywords_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
         )
     """)
 
@@ -1191,12 +1400,19 @@ def fetch_k_signal_teaser(signals: List[Dict]) -> List[Dict]:
 # ============================================================
 
 def _youtube_query_window() -> List[str]:
-    """하루 47개 query를 순환하고 NL/DE에 각각 적용한다."""
-    if not YOUTUBE_QUERY_ROTATION:
+    """
+    하루 쿼리 전체를 NL/DE에 각각 적용한다.
+    풀 크기가 곧 API 호출 예산과 직결되므로(94~96 calls/day 전제),
+    풀 크기는 고정한 채 ratio만큼만 동적 키워드로 교체한다.
+    """
+    hybrid_pool = replace_hybrid_fixed_size(
+        YOUTUBE_QUERY_ROTATION, get_weekly_dynamic_pool()
+    )
+    if not hybrid_pool:
         return []
-    n = len(YOUTUBE_QUERY_ROTATION)
+    n = len(hybrid_pool)
     start = rotation_index(n)
-    return [YOUTUBE_QUERY_ROTATION[(start + i) % n] for i in range(n)]
+    return [hybrid_pool[(start + i) % n] for i in range(n)]
 
 
 def fetch_youtube_trends() -> List[Dict]:
@@ -1374,6 +1590,12 @@ def get_apify_monthly_results() -> int:
     return int(row["total"] or 0)
 
 
+def get_apify_daily_results() -> int:
+    month = get_usage_month()
+    day_endpoint = f"results:{get_today_iso()}"
+    return get_api_calls("apify_instagram", day_endpoint, month)
+
+
 def add_apify_result_usage(count: int) -> None:
     if count <= 0:
         return
@@ -1402,8 +1624,14 @@ def get_today_apify_instagram_tags() -> List[str]:
     # 하루 5개씩 순환하여 broad discovery와 ingredient/product discovery를 교차한다.
     # (기존 2개 -> 4개 -> 5개: 니치 해시태그일수록 3일 이내 후보 게시물 자체가 적어
     # resultsLimit을 다 못 채우는 문제가 있었음. 태그 다양성을 늘려 후보 풀을 넓힌다.)
-    idx = rotation_index(len(INSTAGRAM_ROTATION))
-    pool = INSTAGRAM_ROTATION
+    # 고정 INSTAGRAM_ROTATION(70%) + 이번 주 동적 후보 풀(30%)을 섞은 하이브리드
+    # 풀에서 뽑는다. 하루 5개라는 예산은 풀 크기와 무관하므로 그대로 확장한다.
+    pool = interleave_hybrid_expand(
+        INSTAGRAM_ROTATION, get_weekly_dynamic_pool()
+    )
+    if not pool:
+        return []
+    idx = rotation_index(len(pool))
     return [pool[(idx + i) % len(pool)] for i in range(5)]
 
 
@@ -1416,18 +1644,29 @@ def fetch_instagram_apify() -> List[Dict]:
         return []
 
     used = get_apify_monthly_results()
-    remaining = APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT - used
+    used_today = get_apify_daily_results()
+    daily_remaining = APIFY_INSTAGRAM_DAILY_RESULT_LIMIT - used_today
+    remaining = min(
+        APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT - used,
+        daily_remaining
+    )
     if remaining <= 0:
         logging.warning(
-            "Apify Instagram monthly result cap reached: month=%d/%d. Instagram collection stopped.",
-            used, APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT
+            "Apify Instagram result cap reached: month=%d/%d today=%d/%d. Instagram collection stopped.",
+            used, APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT,
+            used_today, APIFY_INSTAGRAM_DAILY_RESULT_LIMIT
         )
         return []
 
     tags = get_today_apify_instagram_tags()
-    # Apify Actor의 resultsLimit은 directUrls 전체에 대한 합산 상한이 아니라
-    # URL(태그)별 상한으로 동작할 수 있으므로, 월간 잔여 예산을 태그 수로 나눠
-    # 요청한다. 일일 결과 상한은 두지 않는다.
+    # 2026-08-13 실행 로그에서 실측으로 확인됨: resultsLimit=58(합산 상한이라고
+    # 가정했던 값)로 요청했는데 실제로는 84건이 돌아왔다(태그 5개, 평균
+    # 태그당 ~17건). 즉 이 Actor의 resultsLimit은 directUrls 전체에 대한
+    # 합산 상한이 아니라 URL(태그)별 상한이다 - "1회 호출 = 합산 총량"이라는
+    # 이전 가정은 틀렸다. 이 상태로 두면 하루/월 예산을 실제로 초과할 수 있어
+    # (이번에도 하루 캡 58을 84로 넘김) 태그 개수로 다시 나눠서, 태그별 상한 x
+    # 태그 개수의 합이 remaining을 절대 넘지 않도록 한다. 이렇게 하면 실제
+    # 의미가 "합산"이든 "태그별"이든 상관없이 항상 안전하다.
     results_limit = max(1, remaining // max(1, len(tags)))
     if remaining < 1:
         logging.warning("Apify Instagram remaining result budget too small: %d", remaining)
@@ -1533,9 +1772,10 @@ def fetch_instagram_apify() -> List[Dict]:
         # 실제 반환 결과만 quota ledger에 기록한다.
         add_apify_result_usage(len(data))
         logging.info(
-            "Apify Instagram results=%d valid=%d; quota month=%d/%d",
+            "Apify Instagram results=%d valid=%d; quota month=%d/%d today=%d/%d",
             len(data), len(results), get_apify_monthly_results(),
-            APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT
+            APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT, get_apify_daily_results(),
+            APIFY_INSTAGRAM_DAILY_RESULT_LIMIT
         )
         return results
     except requests.exceptions.Timeout:
@@ -2834,6 +3074,10 @@ def main():
         signal_date = get_today_iso()
         regions = ["NL", "DE"]
 
+        logging.info(
+            "This week's dynamic keyword pool (%s): %s",
+            get_iso_week_id(), get_weekly_dynamic_pool()
+        )
         logging.info(
             "Today's TikTok queries: %s",
             get_today_tiktok_queries()
