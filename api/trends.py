@@ -1,86 +1,192 @@
-# api/trends.py
 from fastapi import APIRouter, HTTPException
 from api.database import get_db_connection
 
-router = APIRouter(prefix="/api", tags=["Trends"])
+
+router = APIRouter(
+    prefix="/api",
+    tags=["Trends"]
+)
+
+
+# ============================================================
+# 오늘의 TOP 트렌드
+# ============================================================
 
 @router.get("/dashboard/today")
-def get_today_dashboard():
-    """오늘 날짜 기준 Trend Score TOP 10 조회"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # 가장 최근 수집 날짜 구하기
-    cursor.execute("SELECT MAX(signal_date) FROM trend_scores")
-    latest_date = cursor.fetchone()[0]
-    
-    if not latest_date:
-        conn.close()
-        return {"date": None, "trends": []}
+def get_today_dashboard(limit: int = 10):
 
-    query = """
-        SELECT keyword, trend_score, volume_score, velocity_score, 
-               persistence_score, cross_platform_score, regional_score
-        FROM trend_scores
-        WHERE signal_date = ?
-        ORDER BY trend_score DESC
-        LIMIT 10
-    """
-    cursor.execute(query, (latest_date,))
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return {
-        "date": latest_date,
-        "trends": [dict(row) for row in rows]
-    }
+    conn = get_db_connection()
+
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT MAX(signal_date)
+            FROM trend_scores
+        """)
+
+        latest_date = cursor.fetchone()[0]
+
+        if not latest_date:
+            return {
+                "date": None,
+                "trends": []
+            }
+
+        cursor.execute("""
+            SELECT
+                keyword,
+                trend_score,
+                volume_score,
+                velocity_score,
+                persistence_score,
+                cross_platform_score,
+                regional_score,
+                platform_normalized_score
+            FROM trend_scores
+            WHERE signal_date = ?
+            ORDER BY trend_score DESC
+            LIMIT ?
+        """, (latest_date, limit))
+
+        rows = cursor.fetchall()
+
+        return {
+            "date": latest_date,
+            "count": len(rows),
+            "trends": [dict(row) for row in rows]
+        }
+
+    finally:
+        conn.close()
+
+
+# ============================================================
+# 특정 키워드의 과거 추이
+# ============================================================
 
 @router.get("/trends/{keyword}/history")
 def get_keyword_history(keyword: str):
-    """특정 키워드의 과거 점수 추이 (상승 그래프용)"""
+
     conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    query = """
-        SELECT signal_date, trend_score, volume_score, velocity_score
-        FROM trend_scores
-        WHERE keyword = ?
-        ORDER BY signal_date ASC
-    """
-    cursor.execute(query, (keyword,))
-    rows = cursor.fetchall()
-    conn.close()
-    
-    if not rows:
-        raise HTTPException(status_code=404, detail="해당 키워드의 기록을 찾을 수 없습니다.")
-        
-    return {
-        "keyword": keyword,
-        "history": [dict(row) for row in rows]
-    }
+
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                signal_date,
+                trend_score,
+                volume_score,
+                velocity_score,
+                persistence_score,
+                cross_platform_score,
+                regional_score
+            FROM trend_scores
+            WHERE keyword = ?
+            ORDER BY signal_date ASC
+        """, (keyword,))
+
+        rows = cursor.fetchall()
+
+        if not rows:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Keyword not found: {keyword}"
+            )
+
+        return {
+            "keyword": keyword,
+            "history": [dict(row) for row in rows]
+        }
+
+    finally:
+        conn.close()
+
+
+# ============================================================
+# 플랫폼 교차 신호
+# ============================================================
 
 @router.get("/cross-signal/{keyword}")
 def get_cross_signal(keyword: str):
-    """플랫폼별 교차 검증 신호 데이터 조회"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # 가장 최근 날짜의 플랫폼별 mention 수 집계
-    query = """
-        SELECT platform, SUM(mentions) as total_mentions
-        FROM keyword_daily
-        WHERE keyword = ? AND signal_date = (SELECT MAX(signal_date) FROM keyword_daily)
-        GROUP BY platform
-    """
-    cursor.execute(query, (keyword,))
-    rows = cursor.fetchall()
-    conn.close()
-    
-    platform_data = {row["platform"]: row["total_mentions"] for row in rows}
-    
-    return {
-        "keyword": keyword,
-        "platform_signals": platform_data,
-        "cross_market_confirmed": len(platform_data) >= 3  # 3개 이상 플랫폼 감지 시 True
-    }
 
+    conn = get_db_connection()
+
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                platform,
+                SUM(mentions) AS total_mentions
+            FROM keyword_daily
+            WHERE keyword = ?
+              AND signal_date = (
+                  SELECT MAX(signal_date)
+                  FROM keyword_daily
+              )
+            GROUP BY platform
+            ORDER BY total_mentions DESC
+        """, (keyword,))
+
+        rows = cursor.fetchall()
+
+        platform_data = {
+            row["platform"]: row["total_mentions"]
+            for row in rows
+        }
+
+        return {
+            "keyword": keyword,
+            "platform_signals": platform_data,
+            "platform_count": len(platform_data),
+            "cross_market_confirmed": len(platform_data) >= 3
+        }
+
+    finally:
+        conn.close()
+
+
+# ============================================================
+# 전체 키워드 랭킹
+# ============================================================
+
+@router.get("/trends")
+def get_trends(limit: int = 50):
+
+    conn = get_db_connection()
+
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT MAX(signal_date)
+            FROM trend_scores
+        """)
+
+        latest_date = cursor.fetchone()[0]
+
+        if not latest_date:
+            return {
+                "date": None,
+                "trends": []
+            }
+
+        cursor.execute("""
+            SELECT *
+            FROM trend_scores
+            WHERE signal_date = ?
+            ORDER BY trend_score DESC
+            LIMIT ?
+        """, (latest_date, limit))
+
+        rows = cursor.fetchall()
+
+        return {
+            "date": latest_date,
+            "trends": [dict(row) for row in rows]
+        }
+
+    finally:
+        conn.close()
