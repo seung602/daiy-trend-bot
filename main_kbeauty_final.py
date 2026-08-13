@@ -49,13 +49,15 @@ TIKTOK_QUERY_COUNT = 50  # 요청 1회당 가져오는 최대 영상 수 (쿼터
 # Instagram은 Apify의 공식 유지 Actor(apify/instagram-scraper)를 사용한다.
 # Free plan에서 이 Actor의 결과 단가는 $2.70/1,000 results.
 # $5.00 무료 크레딧 기준 이론상 한도는 1,851건($5.00 / $2.70 * 1000).
-# 요청량 자체가 코드 레벨에서 하드 캡을 넘지 못하도록 막혀 있어(초과 요청 자체가
-# 불가능) 실제 초과 위험은 거의 없으므로, 약 3%(=$0.14)만 안전 여유로 남기고
-# 월 1,800 results(=$4.86)까지 사용한다.
-# 하루 최대 58 results -> 31일 기준 1,798 results로 월간 캡 이내.
+# 진짜 안전장치는 월간 캡(아래 1,800건=$4.86)이다. 하루 캡은 태그당 배분량을
+# 정하는 목표치일 뿐이고, remaining이 월간 캡에 의해 자동으로 줄어들기 때문에
+# 하루 캡을 다소 넉넉히 잡아도(60 x 31일 = 1,860건, 단독으로는 $5.02로 살짝
+# 초과) 실제로는 월중 어느 시점에 월간 캡에서 자연스럽게 멈춘다 - 이번 달
+# 며칠 일찍 예산을 다 쓰고 그 뒤에는 0건 수집으로 안전하게 유지된다.
+# 태그당 12건(5개 태그 x 12 = 60) 목표.
 APIFY_INSTAGRAM_ENABLED = True
 APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT = 1800
-APIFY_INSTAGRAM_DAILY_RESULT_LIMIT = 58
+APIFY_INSTAGRAM_DAILY_RESULT_LIMIT = 60
 APIFY_INSTAGRAM_ACTOR = "apify/instagram-scraper"
 
 # Amazon은 "구매 전환 신호"로 활용한다 (SNS의 화제성 신호와 상호보완).
@@ -1239,16 +1241,16 @@ def fetch_instagram_apify() -> List[Dict]:
         return []
 
     tags = get_today_apify_instagram_tags()
-    # 실제 Apify 호출은 태그별 개별 호출이 아니라 directUrls 여러 개를 담은
-    # '1회 호출'이고, resultsLimit은 그 호출 전체에 대한 총량이다.
-    # 기존에 remaining // len(tags)로 나눠서 요청했던 건 "태그마다 별도 호출"을
-    # 전제로 한 계산 실수였고, 실제로는 하루 예산의 절반도 요청하지 못하고
-    # 있었다(예: remaining=50인데 요청은 25만 보냄). 이제 이 호출 하나가
-    # 하루/월 예산 전체(remaining)를 그대로 요청하도록 수정한다. remaining은
-    # 이미 APIFY_INSTAGRAM_DAILY_RESULT_LIMIT과 월간 잔여량으로 상한이 걸려
-    # 있으므로 별도 상한을 추가로 둘 필요는 없다.
-    results_limit = remaining
-    if results_limit < 1:
+    # 2026-08-13 실행 로그에서 실측으로 확인됨: resultsLimit=58(합산 상한이라고
+    # 가정했던 값)로 요청했는데 실제로는 84건이 돌아왔다(태그 5개, 평균
+    # 태그당 ~17건). 즉 이 Actor의 resultsLimit은 directUrls 전체에 대한
+    # 합산 상한이 아니라 URL(태그)별 상한이다 - "1회 호출 = 합산 총량"이라는
+    # 이전 가정은 틀렸다. 이 상태로 두면 하루/월 예산을 실제로 초과할 수 있어
+    # (이번에도 하루 캡 58을 84로 넘김) 태그 개수로 다시 나눠서, 태그별 상한 x
+    # 태그 개수의 합이 remaining을 절대 넘지 않도록 한다. 이렇게 하면 실제
+    # 의미가 "합산"이든 "태그별"이든 상관없이 항상 안전하다.
+    results_limit = max(1, remaining // max(1, len(tags)))
+    if remaining < 1:
         logging.warning("Apify Instagram remaining result budget too small: %d", remaining)
         return []
 
