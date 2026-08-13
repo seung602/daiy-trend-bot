@@ -35,6 +35,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 APIFY_TOKEN = os.getenv("APIFY_TOKEN")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 # Gemini: 빈 환경변수로 기본 모델이 덮어써지는 문제를 방지한다.
 GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "gemini-3.6-flash").strip()
@@ -46,11 +47,17 @@ GEMINI_FALLBACK_MODEL = "gemini-3.5-flash-lite"
 TIKTOK_DAILY_LIMIT = 9
 TIKTOK_QUERY_COUNT = 50  # 요청 1회당 가져오는 최대 영상 수 (쿼터는 호출 수 기준이므로 부담 없음)
 
-# Instagram: Apify 공식 유지 Actor + 월/일 결과 상한으로 비용을 통제한다.
-# 실제 반환 결과 수를 ledger에 기록하고, 남은 예산만큼만 다음 실행을 허용한다.
+# Instagram은 Apify의 공식 유지 Actor(apify/instagram-scraper)를 사용한다.
+# Free plan에서 이 Actor의 결과 단가는 $2.70/1,000 results.
+# $5.00 무료 크레딧 기준 이론상 한도는 1,851건($5.00 / $2.70 * 1000).
+# 진짜 안전장치는 월간 캡(아래 1,800건=$4.86)이다. 하루 캡은 태그당 배분량을
+# 정하는 목표치일 뿐이고, remaining이 월간 캡에 의해 자동으로 줄어들기 때문에
+# 하루 캡을 다소 넉넉히 잡아도(60 x 31일 = 1,860건, 단독으로는 $5.02로 살짝
+# 초과) 실제로는 월중 어느 시점에 월간 캡에서 자연스럽게 멈춘다 - 이번 달
+# 며칠 일찍 예산을 다 쓰고 그 뒤에는 0건 수집으로 안전하게 유지된다.
+# 태그당 12건(5개 태그 x 12 = 60) 목표.
 APIFY_INSTAGRAM_ENABLED = True
 APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT = 1800
-APIFY_INSTAGRAM_DAILY_RESULT_LIMIT = 60
 APIFY_INSTAGRAM_ACTOR = "apify/instagram-scraper"
 
 # Amazon은 "구매 전환 신호"로 활용한다 (SNS의 화제성 신호와 상호보완).
@@ -108,6 +115,36 @@ AMAZON_QUERY_ROTATION = [
     # Europe-oriented demand
     ["skincare germany", "kbeauty germany", "sunscreen germany"],
     ["skincare europe", "kbeauty europe", "anti aging europe"],
+]
+
+
+# YouTube Data API v3 - 공식 API
+# 기본 무료 quota: 10,000 units/day. search.list = 100 units/call,
+# videos.list = 1 unit/call. 실사용 안정성을 위해 96 search calls +
+# 6 video-stat calls = 9,606 units/day까지 사용한다.
+# 48개 beauty query를 NL/DE 각각 검색해 서유럽 신호를 넓게 커버한다.
+YOUTUBE_SEARCH_CALLS_PER_DAY = 96
+YOUTUBE_VIDEO_STATS_CALLS_PER_DAY = 6
+YOUTUBE_SEARCH_RESULTS_PER_CALL = 50
+YOUTUBE_VIDEO_STATS_BATCH_SIZE = 50
+YOUTUBE_LOOKBACK_DAYS = 7
+
+YOUTUBE_QUERY_ROTATION = [
+    "skincare", "skincare routine", "beauty skincare", "kbeauty",
+    "korean skincare", "kbeauty routine", "skincare ingredient",
+    "viral skincare ingredient", "beauty ingredient", "serum trend",
+    "viral serum", "best serum", "skin barrier", "barrier repair",
+    "sensitive skin skincare", "retinol skincare", "retinal skincare",
+    "anti aging skincare", "pdrn skincare", "polynucleotide skincare",
+    "exosome skincare", "peptide skincare", "collagen skincare",
+    "firming skincare", "niacinamide skincare", "vitamin c skincare",
+    "brightening skincare", "acne skincare", "blemish skincare",
+    "pore care", "hyperpigmentation", "dark spot skincare",
+    "brightening serum", "dry skin", "dehydrated skin",
+    "hydrating skincare", "sunscreen", "sun stick", "spf skincare",
+    "cica skincare", "centella skincare", "snail mucin",
+    "spicule skincare", "spicule serum", "azelaic acid skincare",
+    "glass skin", "skin flooding", "skin cycling"
 ]
 
 # TikTok은 tiktok-scraper7 플랜 기준 300 calls/month(hard limit)이다.
@@ -260,7 +297,7 @@ def get_today_tiktok_queries() -> List[str]:
     """
     하루 최대 TIKTOK_DAILY_LIMIT개의 검색어를 순환하며 수집한다.
     TIKTOK_QUERY_ROTATION(flat pool) 중 오늘 시작 위치부터 연속으로 뽑아
-    넓게 커버한다.
+    넓게 커버한다 (Instagram 스크래퍼와 동일한 sliding window 방식).
     """
     n = len(TIKTOK_QUERY_ROTATION)
     if n == 0:
@@ -274,6 +311,13 @@ def get_today_tiktok_queries() -> List[str]:
         for i in range(count)
     ]
 
+
+
+def get_today_instagram_tag() -> str:
+    """Instagram Statistics API: 하루 1개 tag를 순환한다."""
+    if not INSTAGRAM_ROTATION:
+        return "kbeauty"
+    return INSTAGRAM_ROTATION[rotation_index(len(INSTAGRAM_ROTATION))]
 
 
 def get_today_amazon_queries() -> List[str]:
@@ -1143,6 +1187,172 @@ def fetch_k_signal_teaser(signals: List[Dict]) -> List[Dict]:
 
 
 # ============================================================
+# 9d. YouTube Data API v3 - 공식 API
+# ============================================================
+
+def _youtube_query_window() -> List[str]:
+    """하루 47개 query를 순환하고 NL/DE에 각각 적용한다."""
+    if not YOUTUBE_QUERY_ROTATION:
+        return []
+    n = len(YOUTUBE_QUERY_ROTATION)
+    start = rotation_index(n)
+    return [YOUTUBE_QUERY_ROTATION[(start + i) % n] for i in range(n)]
+
+
+def fetch_youtube_trends() -> List[Dict]:
+    """
+    공식 YouTube Data API v3만 사용한다.
+
+    96 search.list 호출(48 queries x NL/DE) + 6 videos.list 호출로
+    기본 10,000 units/day 중 9,406 units를 사용한다.
+    search 결과는 최근 7일 영상만 수집하고, videos.list로 일부 영상의
+    조회수/좋아요/댓글수를 보강한다.
+    """
+    if not YOUTUBE_API_KEY:
+        logging.warning("YOUTUBE_API_KEY missing. YouTube skipped.")
+        return []
+
+    search_url = "https://www.googleapis.com/youtube/v3/search"
+    videos_url = "https://www.googleapis.com/youtube/v3/videos"
+    headers = {"Accept": "application/json"}
+    queries = _youtube_query_window()
+    regions = ["NL", "DE"]
+    published_after = (
+        get_market_now() - datetime.timedelta(days=YOUTUBE_LOOKBACK_DAYS)
+    ).astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+    results = []
+    video_ids = []
+    seen_ids = set()
+    search_calls = 0
+    stats_calls = 0
+    quota_exhausted = False
+
+    for region in regions:
+        for query in queries:
+            if search_calls >= YOUTUBE_SEARCH_CALLS_PER_DAY or quota_exhausted:
+                break
+            try:
+                res = session.get(
+                    search_url,
+                    headers=headers,
+                    params={
+                        "key": YOUTUBE_API_KEY,
+                        "part": "snippet",
+                        "q": query,
+                        "type": "video",
+                        "maxResults": str(YOUTUBE_SEARCH_RESULTS_PER_CALL),
+                        "order": "date",
+                        "publishedAfter": published_after,
+                        "regionCode": region,
+                        "safeSearch": "none"
+                    },
+                    timeout=15
+                )
+                search_calls += 1
+
+                if res.status_code != 200:
+                    logging.warning(
+                        "YouTube search '%s' [%s] HTTP %s: %s",
+                        query, region, res.status_code, res.text[:300]
+                    )
+                    if res.status_code == 403 and "quotaExceeded" in res.text:
+                        quota_exhausted = True
+                    continue
+
+                data = res.json()
+                for item in data.get("items", []):
+                    video_id = str(item.get("id", {}).get("videoId") or "").strip()
+                    snippet = item.get("snippet", {}) or {}
+                    title = str(snippet.get("title") or "").strip()
+                    description = str(snippet.get("description") or "").strip()
+                    if not video_id or not title or video_id in seen_ids:
+                        continue
+                    if not is_beauty_relevant(title + " " + description):
+                        continue
+                    seen_ids.add(video_id)
+                    video_ids.append(video_id)
+                    results.append({
+                        "platform": "youtube",
+                        "query": query,
+                        "tag": "",
+                        "region": region,
+                        "text": title.replace("\n", " ")[:220],
+                        "video_id": video_id,
+                        "published_at": snippet.get("publishedAt")
+                    })
+
+            except Exception as e:
+                logging.error(
+                    "YouTube search '%s' [%s] failed: %s", query, region, e
+                )
+
+            time.sleep(0.15)
+
+        if search_calls >= YOUTUBE_SEARCH_CALLS_PER_DAY or quota_exhausted:
+            break
+
+    # search 결과에서 중복 제거된 영상 중 최대 300개에 대해 통계를 보강한다.
+    stats_ids = video_ids[:YOUTUBE_VIDEO_STATS_CALLS_PER_DAY * YOUTUBE_VIDEO_STATS_BATCH_SIZE]
+    stats_by_id = {}
+
+    for start in range(0, len(stats_ids), YOUTUBE_VIDEO_STATS_BATCH_SIZE):
+        if stats_calls >= YOUTUBE_VIDEO_STATS_CALLS_PER_DAY or quota_exhausted:
+            break
+        batch = stats_ids[start:start + YOUTUBE_VIDEO_STATS_BATCH_SIZE]
+        try:
+            res = session.get(
+                videos_url,
+                headers=headers,
+                params={
+                    "key": YOUTUBE_API_KEY,
+                    "part": "statistics,snippet",
+                    "id": ",".join(batch),
+                    "maxResults": str(YOUTUBE_VIDEO_STATS_BATCH_SIZE)
+                },
+                timeout=15
+            )
+            stats_calls += 1
+            if res.status_code != 200:
+                logging.warning(
+                    "YouTube videos.list HTTP %s: %s", res.status_code, res.text[:300]
+                )
+                if res.status_code == 403 and "quotaExceeded" in res.text:
+                    quota_exhausted = True
+                continue
+
+            for item in res.json().get("items", []):
+                vid = item.get("id")
+                st = item.get("statistics", {}) or {}
+                stats_by_id[vid] = {
+                    "views": st.get("viewCount"),
+                    "likes": st.get("likeCount"),
+                    "comments": st.get("commentCount")
+                }
+        except Exception as e:
+            logging.error("YouTube videos.list failed: %s", e)
+        time.sleep(0.15)
+
+    for item in results:
+        stats = stats_by_id.get(item.get("video_id"), {})
+        item["text"] = (
+            item["text"]
+            + f" [views={stats.get('views','NA')}, likes={stats.get('likes','NA')}, comments={stats.get('comments','NA')}]"
+        )[:320]
+
+    logging.info(
+        "YouTube calls search=%d/%d, videos=%d/%d, unique valid samples=%d, quota_used_est=%d/10000",
+        search_calls,
+        YOUTUBE_SEARCH_CALLS_PER_DAY,
+        stats_calls,
+        YOUTUBE_VIDEO_STATS_CALLS_PER_DAY,
+        len(results),
+        search_calls * 100 + stats_calls
+    )
+    return results
+
+
+# ============================================================
 # 10. Instagram - Apify official maintained Actor
 # ============================================================
 
@@ -1162,12 +1372,6 @@ def get_apify_monthly_results() -> int:
     """, (month,)).fetchone()
     conn.close()
     return int(row["total"] or 0)
-
-
-def get_apify_daily_results() -> int:
-    month = get_usage_month()
-    day_endpoint = f"results:{get_today_iso()}"
-    return get_api_calls("apify_instagram", day_endpoint, month)
 
 
 def add_apify_result_usage(count: int) -> None:
@@ -1195,7 +1399,9 @@ def add_apify_result_usage(count: int) -> None:
 
 
 def get_today_apify_instagram_tags() -> List[str]:
-    # 하루 5개 태그를 순환하여 broad discovery와 ingredient/product discovery를 교차한다.
+    # 하루 5개씩 순환하여 broad discovery와 ingredient/product discovery를 교차한다.
+    # (기존 2개 -> 4개 -> 5개: 니치 해시태그일수록 3일 이내 후보 게시물 자체가 적어
+    # resultsLimit을 다 못 채우는 문제가 있었음. 태그 다양성을 늘려 후보 풀을 넓힌다.)
     idx = rotation_index(len(INSTAGRAM_ROTATION))
     pool = INSTAGRAM_ROTATION
     return [pool[(idx + i) % len(pool)] for i in range(5)]
@@ -1210,23 +1416,18 @@ def fetch_instagram_apify() -> List[Dict]:
         return []
 
     used = get_apify_monthly_results()
-    used_today = get_apify_daily_results()
-    daily_remaining = APIFY_INSTAGRAM_DAILY_RESULT_LIMIT - used_today
-    remaining = min(
-        APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT - used,
-        daily_remaining
-    )
+    remaining = APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT - used
     if remaining <= 0:
         logging.warning(
-            "Apify Instagram result cap reached: month=%d/%d today=%d/%d. Instagram collection stopped.",
-            used, APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT,
-            used_today, APIFY_INSTAGRAM_DAILY_RESULT_LIMIT
+            "Apify Instagram monthly result cap reached: month=%d/%d. Instagram collection stopped.",
+            used, APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT
         )
         return []
 
     tags = get_today_apify_instagram_tags()
-    # resultsLimit은 태그별 반환 상한으로 동작할 수 있으므로,
-    # 태그 수로 나눠 요청해 월/일 결과 예산을 넘지 않도록 한다.
+    # Apify Actor의 resultsLimit은 directUrls 전체에 대한 합산 상한이 아니라
+    # URL(태그)별 상한으로 동작할 수 있으므로, 월간 잔여 예산을 태그 수로 나눠
+    # 요청한다. 일일 결과 상한은 두지 않는다.
     results_limit = max(1, remaining // max(1, len(tags)))
     if remaining < 1:
         logging.warning("Apify Instagram remaining result budget too small: %d", remaining)
@@ -1332,10 +1533,9 @@ def fetch_instagram_apify() -> List[Dict]:
         # 실제 반환 결과만 quota ledger에 기록한다.
         add_apify_result_usage(len(data))
         logging.info(
-            "Apify Instagram results=%d valid=%d; quota month=%d/%d today=%d/%d",
+            "Apify Instagram results=%d valid=%d; quota month=%d/%d",
             len(data), len(results), get_apify_monthly_results(),
-            APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT, get_apify_daily_results(),
-            APIFY_INSTAGRAM_DAILY_RESULT_LIMIT
+            APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT
         )
         return results
     except requests.exceptions.Timeout:
@@ -2089,16 +2289,20 @@ IMPORTANT DATA MODEL:
    Instagram, or Amazon, that is a strong cross-market confirmation
    worth calling out explicitly (Korea-first signal now crossing into
    the West).
-6. A keyword found only on TikTok/Instagram should NOT be considered
+6. YouTube = longer-form consumer-interest and product-review signal.
+   Use video freshness plus views/likes/comments when available. YouTube is
+   especially useful as a confirmation layer for sustained interest, not as a
+   direct measure of total European market demand.
+7. A keyword found only on TikTok/Instagram should NOT be considered
    confirmed unless Google or Amazon data supports it, or it is
    explicitly labeled emerging.
-7. Google Autocomplete candidates are NOT Google Trends volume scores.
-8. Google Trends interest/rising values, when available, are relative
+8. Google Autocomplete candidates are NOT Google Trends volume scores.
+9. Google Trends interest/rising values, when available, are relative
    signals.
 9. Do not claim that one keyword's 100 is directly comparable with
    another keyword's 100 unless they were collected in the same
    comparison group.
-10. Do not invent missing values.
+11. Do not invent missing values.
 
 GOOGLE INDEPENDENT DISCOVERY:
 {google_summary}
@@ -2687,12 +2891,16 @@ def main():
         k_signal_signals = fetch_k_signal()
         k_signal_teaser = []  # timeout/추가 호출을 피하기 위해 teaser endpoint는 사용하지 않음
 
+        logging.info("Fetching YouTube via official Data API v3...")
+        youtube_signals = fetch_youtube_trends()
+
         all_signals = (
             tiktok_signals +
             amazon_signals +
             instagram_signals +
             k_signal_signals +
-            k_signal_teaser
+            k_signal_teaser +
+            youtube_signals
         )
 
         save_raw_signals(all_signals)
