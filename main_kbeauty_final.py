@@ -47,13 +47,15 @@ TIKTOK_DAILY_LIMIT = 9
 TIKTOK_QUERY_COUNT = 50  # 요청 1회당 가져오는 최대 영상 수 (쿼터는 호출 수 기준이므로 부담 없음)
 
 # Instagram은 Apify의 공식 유지 Actor(apify/instagram-scraper)를 사용한다.
-# Free plan에서 이 Actor의 결과 단가는 $2.70/1,000 results이므로,
-# 월 1,700 results hard cap으로 약 $4.59까지만 사용하고 안전 여유를 남긴다.
-# 하루 최대 50 results -> 31일에도 1,550 results 이내.
+# Free plan에서 이 Actor의 결과 단가는 $2.70/1,000 results.
+# $5.00 무료 크레딧 기준 이론상 한도는 1,851건($5.00 / $2.70 * 1000).
+# 요청량 자체가 코드 레벨에서 하드 캡을 넘지 못하도록 막혀 있어(초과 요청 자체가
+# 불가능) 실제 초과 위험은 거의 없으므로, 약 3%(=$0.14)만 안전 여유로 남기고
+# 월 1,800 results(=$4.86)까지 사용한다.
+# 하루 최대 58 results -> 31일 기준 1,798 results로 월간 캡 이내.
 APIFY_INSTAGRAM_ENABLED = True
-APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT = 1600
-APIFY_INSTAGRAM_DAILY_RESULT_LIMIT = 50
-APIFY_INSTAGRAM_PER_TAG_LIMIT = 25
+APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT = 1800
+APIFY_INSTAGRAM_DAILY_RESULT_LIMIT = 58
 APIFY_INSTAGRAM_ACTOR = "apify/instagram-scraper"
 
 # Amazon은 "구매 전환 신호"로 활용한다 (SNS의 화제성 신호와 상호보완).
@@ -1205,10 +1207,12 @@ def add_apify_result_usage(count: int) -> None:
 
 
 def get_today_apify_instagram_tags() -> List[str]:
-    # 하루 2개씩 순환하여 broad discovery와 ingredient/product discovery를 교차한다.
+    # 하루 5개씩 순환하여 broad discovery와 ingredient/product discovery를 교차한다.
+    # (기존 2개 -> 4개 -> 5개: 니치 해시태그일수록 3일 이내 후보 게시물 자체가 적어
+    # resultsLimit을 다 못 채우는 문제가 있었음. 태그 다양성을 늘려 후보 풀을 넓힌다.)
     idx = rotation_index(len(INSTAGRAM_ROTATION))
     pool = INSTAGRAM_ROTATION
-    return [pool[idx], pool[(idx + 1) % len(pool)]]
+    return [pool[(idx + i) % len(pool)] for i in range(5)]
 
 
 def fetch_instagram_apify() -> List[Dict]:
@@ -1235,12 +1239,16 @@ def fetch_instagram_apify() -> List[Dict]:
         return []
 
     tags = get_today_apify_instagram_tags()
-    # 결과 단위 hard cap. 남은 quota가 50보다 작으면 자동 축소하여 절대 cap을 넘지 않게 한다.
-    per_tag = min(
-        APIFY_INSTAGRAM_PER_TAG_LIMIT,
-        remaining // max(1, len(tags))
-    )
-    if per_tag < 1:
+    # 실제 Apify 호출은 태그별 개별 호출이 아니라 directUrls 여러 개를 담은
+    # '1회 호출'이고, resultsLimit은 그 호출 전체에 대한 총량이다.
+    # 기존에 remaining // len(tags)로 나눠서 요청했던 건 "태그마다 별도 호출"을
+    # 전제로 한 계산 실수였고, 실제로는 하루 예산의 절반도 요청하지 못하고
+    # 있었다(예: remaining=50인데 요청은 25만 보냄). 이제 이 호출 하나가
+    # 하루/월 예산 전체(remaining)를 그대로 요청하도록 수정한다. remaining은
+    # 이미 APIFY_INSTAGRAM_DAILY_RESULT_LIMIT과 월간 잔여량으로 상한이 걸려
+    # 있으므로 별도 상한을 추가로 둘 필요는 없다.
+    results_limit = remaining
+    if results_limit < 1:
         logging.warning("Apify Instagram remaining result budget too small: %d", remaining)
         return []
 
@@ -1250,7 +1258,7 @@ def fetch_instagram_apify() -> List[Dict]:
             for tag in tags
         ],
         "resultsType": "posts",
-        "resultsLimit": per_tag,
+        "resultsLimit": results_limit,
         "onlyPostsNewerThan": "3 days",
         "addParentData": True
     }
@@ -1262,7 +1270,7 @@ def fetch_instagram_apify() -> List[Dict]:
     try:
         logging.info(
             "Fetching Instagram via Apify actor=%s tags=%s limit=%d remaining=%d",
-            APIFY_INSTAGRAM_ACTOR, tags, per_tag, remaining
+            APIFY_INSTAGRAM_ACTOR, tags, results_limit, remaining
         )
         res = apify_session.post(
             APIFY_ACTOR_RUN_URL,
