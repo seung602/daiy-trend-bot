@@ -5,6 +5,9 @@ from api.trends import router as trends_router
 from api.platforms import router as platforms_router
 from api.google import router as google_router
 from api.reports import router as reports_router
+from api.keywords import router as keywords_router
+
+app.include_router(keywords_router)
 
 
 app = FastAPI(
