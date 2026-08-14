@@ -1,145 +1,90 @@
 <!doctype html>
 <html lang="ko" dir="ltr">
 <head>
-  <link rel="manifest" href="/static/manifest.json">
-<meta name="theme-color" content="#6c5ce7">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="K-Beauty Trends">
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#6c5ce7">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="K-Beauty Trends">
+  <link rel="manifest" href="/static/manifest.json">
   <title>K-Beauty Trend Intelligence</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
-  <script>
-if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/static/service-worker.js");
-    });
-}
-</script>
 <body>
-<div class="app-shell">
-  <header class="topbar">
-    <div>
-      <div class="eyebrow" data-i18n="eyebrow">K-BEAUTY DATA INTELLIGENCE</div>
-      <h1 data-i18n="title">K-Beauty Trend Intelligence</h1>
-      <div id="dateLabel" class="muted">—</div>
-    </div>
-    <div class="header-actions">
-      <span class="lang-label">🌐</span>
-      <select id="language" aria-label="Language">
-        <option value="ko">한국어</option>
-        <option value="en">English</option>
-        <option value="ar">العربية</option>
-      </select>
-    </div>
-  </header>
-
-  <main>
-    <section id="dashboardView">
-      <div class="kpi-grid">
-        <article class="kpi"><span data-i18n="keywords">키워드</span><strong id="kpiKeywords">—</strong></article>
-        <article class="kpi"><span data-i18n="avgScore">평균 점수</span><strong id="kpiAvg">—</strong></article>
-        <article class="kpi"><span data-i18n="rising">급상승</span><strong id="kpiRising">—</strong></article>
-        <article class="kpi"><span data-i18n="signals">원본 신호</span><strong id="kpiSignals">—</strong></article>
+  <div class="app">
+    <header class="header">
+      <div class="header-left">
+        <p class="eyebrow" data-i18n="eyebrow">KOREA → EUROPE MARKET MONITOR</p>
+        <h1 data-i18n="title">K-Beauty Trend Intelligence</h1>
+        <p id="subtitle" class="subtitle muted">—</p>
       </div>
+      <div class="header-right">
+        <select id="language" class="lang-select" aria-label="Language">
+          <option value="ko">한국어</option>
+          <option value="en">English</option>
+          <option value="ar">العربية</option>
+        </select>
+        <button type="button" id="refreshBtn" class="btn-ghost" data-i18n="refresh">새로고침</button>
+      </div>
+    </header>
 
-      <section class="panel">
-        <div class="panel-head">
-          <div>
-            <h2 data-i18n="topTrends">오늘의 TOP 트렌드</h2>
-            <p class="muted" data-i18n="clickHint">키워드를 클릭하면 상세 분석을 볼 수 있습니다.</p>
-          </div>
-          <button class="ghost" id="refreshBtn" data-i18n="refresh">새로고침</button>
-        </div>
-        <div class="filter-row">
-          <div class="segmented" id="statusFilters">
-            <button data-status="ALL" class="active" data-i18n="all">전체</button>
-            <button data-status="RISING" data-i18n="risingStatus">급상승</button>
-            <button data-status="EMERGING" data-i18n="emergingStatus">신흥</button>
-            <button data-status="ESTABLISHED" data-i18n="stableStatus">안정</button>
-            <button data-status="DECLINING" data-i18n="decliningStatus">하락</button>
-          </div>
-        </div>
-        <div id="trendList" class="trend-list"></div>
-      </section>
-
-      <section class="panel chart-panel">
-        <div class="panel-head">
-          <div>
-            <h2 data-i18n="topHistory">TOP 키워드 추이</h2>
-            <p class="muted" data-i18n="historyHint">선택한 기간의 점수 흐름입니다.</p>
-          </div>
-          <div class="segmented" id="topPeriodFilters">
-            <button data-days="7">7D</button><button data-days="30" class="active">30D</button><button data-days="90">90D</button>
-          </div>
-        </div>
-        <div class="chart-wrap"><canvas id="topChart"></canvas></div>
-      </section>
-    </section>
-
-    <section id="detailView" class="hidden">
-      <button id="backBtn" class="back-btn">← <span data-i18n="back">뒤로</span></button>
-      <div class="detail-title-row">
+    <section class="hero panel">
+      <div class="panel-head">
         <div>
-          <div class="eyebrow" data-i18n="keywordDetail">KEYWORD DETAIL</div>
-          <h2 id="detailKeyword">—</h2>
-          <span id="detailStatus" class="status-badge">—</span>
+          <h2 data-i18n="ksignalTitle">🇰🇷 오늘의 한국 선행 랭킹</h2>
+          <p class="muted" data-i18n="ksignalHint">
+            Olive Young · Glowpick · Hwahae · Zigzag 등 국내 이커머스에서 빠르게 오르는 상품
+          </p>
         </div>
-        <div class="score-hero"><span data-i18n="trendScore">트렌드 점수</span><strong id="detailScore">—</strong></div>
-      </div>
-
-      <div class="period-toolbar">
-        <span data-i18n="analysisPeriod">분석 기간</span>
-        <div class="segmented" id="detailPeriodFilters">
-          <button data-days="7">7D</button><button data-days="30" class="active">30D</button><button data-days="90">90D</button>
+        <div class="hero-meta">
+          <span id="ksDate" class="pill">—</span>
+          <span id="ksCount" class="pill soft">—</span>
         </div>
       </div>
 
-      <div id="breakdownGrid" class="breakdown-grid"></div>
+      <div class="period-tabs" id="periodTabs" role="tablist">
+        <button type="button" class="period-tab active" data-period="day" data-i18n="periodDay">오늘</button>
+        <button type="button" class="period-tab" data-period="week" data-i18n="periodWeek">이번 주</button>
+        <button type="button" class="period-tab" data-period="month" data-i18n="periodMonth">이번 달</button>
+      </div>
 
-      <section class="panel insight-panel">
-        <div class="panel-head"><div><h2 data-i18n="whyTrending">왜 이 키워드가 뜨고 있나?</h2><p class="muted" data-i18n="whyHint">현재 DB의 점수와 신호를 바탕으로 자동 요약합니다.</p></div></div>
-        <div id="insightBody" class="insight-body"></div>
-      </section>
-
-      <section class="panel chart-panel">
-        <div class="panel-head"><h2 data-i18n="scoreHistory">Trend Score History</h2></div>
-        <div class="chart-wrap"><canvas id="scoreChart"></canvas></div>
-      </section>
-
-      <section class="panel chart-panel">
-        <div class="panel-head">
-          <div><h2 data-i18n="platformTrend">플랫폼별 추이</h2><p class="muted" id="platformHint">최근 30일 언급량</p></div>
-          <div id="platformFilters" class="check-row"></div>
-        </div>
-        <div class="chart-wrap"><canvas id="platformChart"></canvas></div>
-      </section>
-
-      <section class="two-col">
-        <section class="panel">
-          <div class="panel-head"><h2 data-i18n="regions">지역별 신호</h2></div>
-          <div id="regionList" class="region-list"></div>
-        </section>
-        <section class="panel">
-          <div class="panel-head">
-            <div><h2 data-i18n="signalsDetail">원본 신호</h2><p class="muted" data-i18n="signalHint">실제 수집된 원본을 확인합니다.</p></div>
-            <div id="signalFilters" class="check-row"></div>
-          </div>
-          <div id="signalList" class="signal-list"></div>
-        </section>
-      </section>
+      <div id="mallFilters" class="chip-row" aria-label="Mall filters"></div>
+      <div id="ksEmpty" class="empty hidden" data-i18n="ksEmpty">
+        아직 K-Signal 데이터가 없습니다. 수집 파이프라인이 돌아간 뒤 표시됩니다.
+      </div>
+      <div id="ksList" class="ks-list"></div>
     </section>
-  </main>
 
-  <footer class="footer"><span data-i18n="readOnly">Read-only analytics dashboard · SQLite source</span></footer>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script src="/static/app.js"></script>
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2 data-i18n="westTitle">🌍 서구 시장 신호</h2>
+          <p class="muted" data-i18n="westHint">
+            TikTok · Amazon · Instagram · YouTube 기준 집계 (참고용 · 일별 검색 로테이션 있음)
+          </p>
+        </div>
+        <span id="westDate" class="pill soft">—</span>
+      </div>
+      <div id="westList" class="west-list"></div>
+      <div id="westEmpty" class="empty hidden" data-i18n="westEmpty">서구 트렌드 점수 데이터가 없습니다.</div>
+    </section>
+
+    <footer class="footer">
+      <span data-i18n="footer">Read-only · 외부 API 호출 없음 · DB 스냅샷 기준</span>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/static/service-worker.js").catch(() => {});
+      });
+    }
+  </script>
 </body>
 </html>
