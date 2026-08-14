@@ -1,10 +1,10 @@
-name: daily-report
+name: K-Beauty Daily Trend Report
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   daily-report:
@@ -14,14 +14,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Restore trend database
-        uses: actions/cache/restore@v4
-        with:
-          path: beauty_trends.db
-          key: kbeauty-db-main-${{ github.run_id }}
-          restore-keys: |
-            kbeauty-db-main-
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -30,19 +22,27 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip requests
 
-      - name: Run daily trend bot
+      - name: Run K-Beauty daily report
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          GEMINI_MODEL: gemini-3.6-flash
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-        run: python main_kbeauty_final_youtube.py
+        run: python main_kbeauty_final.py
 
-      - name: Save trend database
-        uses: actions/cache/save@v4
-        with:
-          path: beauty_trends.db
-          key: kbeauty-db-main-${{ github.run_id }}
+      - name: Commit trend database
+        if: success()
+        run: |
+          git config user.name "kbeauty-bot"
+          git config user.email "kbeauty-bot@users.noreply.github.com"
+          git add beauty_trends.db
+
+          if git diff --cached --quiet; then
+            echo "No changes to beauty_trends.db, skipping commit."
+          else
+            git commit -m "Update trend database ($(TZ=Europe/Amsterdam date +%Y-%m-%d))"
+            git push
+          fi
