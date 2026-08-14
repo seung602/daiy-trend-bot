@@ -2321,26 +2321,7 @@ def get_google_candidate_list(
 # 15. Trend Summary
 # ============================================================
 
-def get_keyword_platforms(keyword: str, signal_date: str) -> str:
-    """Return comma-separated platform list for a keyword on a given date."""
-    conn = get_db()
-    rows = conn.execute("""
-        SELECT platform, SUM(mentions) AS m
-        FROM keyword_daily
-        WHERE keyword = ?
-          AND signal_date = ?
-          AND mentions > 0
-        GROUP BY platform
-        ORDER BY m DESC
-    """, (keyword, signal_date)).fetchall()
-    conn.close()
-
-    if not rows:
-        return "none"
-    return ", ".join(f"{r['platform']}({r['m']})" for r in rows)
-
-
-def build_trend_summary(scores: List[Dict], signal_date: str = None) -> str:
+def build_trend_summary(scores: List[Dict]) -> str:
     if not scores:
         return "No quantitative social trend score available today."
 
@@ -2353,15 +2334,10 @@ def build_trend_summary(scores: List[Dict], signal_date: str = None) -> str:
             else "INSUFFICIENT_HISTORY"
         )
 
-        platforms_text = "unknown"
-        if signal_date:
-            platforms_text = get_keyword_platforms(item["keyword"], signal_date)
-
         lines.append(
             f"{rank}. {item['keyword']} | "
             f"status={item['status']} | "
             f"mentions={item['today_mentions']} | "
-            f"platforms=[{platforms_text}] | "
             f"velocity={velocity_text} | "
             f"persistence={item['persistence_score']:.0f}/100 | "
             f"cross_platform={item['cross_platform_score']:.0f}/100 | "
@@ -2370,7 +2346,6 @@ def build_trend_summary(scores: List[Dict], signal_date: str = None) -> str:
         )
 
     return "\n".join(lines)
-
 
 
 # ============================================================
@@ -2510,34 +2485,64 @@ If a Google value is NA, do not invent a number.
 """
 
     prompt = f"""
-You are a market-intelligence analyst for a Korean cosmetics (K-Beauty)
-company that sells into the Netherlands and Western Europe. Your job is
-NOT to write retail merchandising advice or shelf-display concepts.
-Your sole purpose is to detect and explain market TRENDS and FLOWS:
-what is rising, what is transferring from Korea to the West, what is
-sustained vs temporary noise, and where regional differences appear.
+You are the owner-operator of a small, independent cosmetics and
+skincare RETAIL business (online shop, and/or a small physical store)
+based in the Netherlands. You are NOT a large distributor, wholesaler,
+or corporate sourcing department — you personally decide what to
+stock, test, and promote.
 
-Generate a DAILY K-BEAUTY / COSMETICS MARKET TREND & FLOW REPORT.
+Generate a DAILY COSMETICS & SKINCARE MARKET TREND REPORT.
 
 {data_status}
 
+RETAILER CONSTRAINTS (apply to ALL strategy/action recommendations):
+- Assume small order volumes: test-buying a handful of SKUs in small
+  batches (units, not pallets or containers), not bulk inventory
+  builds.
+- Do NOT recommend things only a large distributor/wholesaler could
+  do: exclusive supply contracts, brand-wide distribution rights,
+  warehouse-scale stock increases (e.g. "X% inventory increase"),
+  multi-country logistics networks, or B2B supply negotiations.
+- DO recommend things a small retailer can act on directly: which 1-3
+  specific SKUs/ingredients to test-order this week, how to merchandise
+  or bundle them, what to say in product descriptions or social posts,
+  pricing/promo ideas, and which trends to just watch (not buy yet).
+- Prefer concrete, small-scale next actions over abstract strategy
+  language ("strengthen brand partnerships" is not useful; "order a
+  small test batch of Anua Niacinamide 10% + TXA and feature it next
+  to your existing BHA toner" is useful).
+
 IMPORTANT DATA MODEL:
-1. TikTok = early viral / discovery signal.
-2. Instagram = secondary social / content confirmation.
-3. Amazon = purchase-stage signal (commercial demand already present).
+1. TikTok = early viral/discovery signal.
+2. Instagram (Apify) = secondary social/content confirmation.
+3. Amazon = purchase-stage signal (actual product titles, best-seller
+   tags, review counts). Amazon presence means the keyword has already
+   reached commercial demand, not just social chatter.
 4. Google = independent search-market discovery.
-5. K-Signal = Korea-domestic UPSTREAM signal (Olive Young, Musinsa,
-   Zigzag, Glowpick, Hwahae ranking velocity). A K-Signal-only item is
-   an early lead still mostly inside Korea. If the same item also appears
-   on Western TikTok / Instagram / Amazon / Google, call out the
-   Korea → West transfer explicitly — this is one of the highest-value
-   insights.
-6. YouTube = longer-form interest / review confirmation (sustained
-   interest, not pure virality).
-7. Single-platform weak signals are not confirmed trends.
-8. Google Autocomplete candidates are NOT volume scores. Do not invent
-   numbers. Do not claim direct comparability of relative scores across
-   different comparison groups.
+5. K-Signal = Korea-domestic UPSTREAM signal, one step earlier than all
+   of the above. It tracks ranking velocity/acceleration on Korean
+   e-commerce platforms (Olive Young, Musinsa, Zigzag, Glowpick,
+   Hwahae) — i.e. products already accelerating in Korea that have not
+   yet reached Western TikTok/Instagram/Amazon. Treat a K-Signal-only
+   item as an early sourcing lead to watch, not yet a confirmed Western
+   trend. If the SAME product/ingredient also shows up in TikTok,
+   Instagram, or Amazon, that is a strong cross-market confirmation
+   worth calling out explicitly (Korea-first signal now crossing into
+   the West).
+6. YouTube = longer-form consumer-interest and product-review signal.
+   Use video freshness plus views/likes/comments when available. YouTube is
+   especially useful as a confirmation layer for sustained interest, not as a
+   direct measure of total European market demand.
+7. A keyword found only on TikTok/Instagram should NOT be considered
+   confirmed unless Google or Amazon data supports it, or it is
+   explicitly labeled emerging.
+8. Google Autocomplete candidates are NOT Google Trends volume scores.
+9. Google Trends interest/rising values, when available, are relative
+   signals.
+9. Do not claim that one keyword's 100 is directly comparable with
+   another keyword's 100 unless they were collected in the same
+   comparison group.
+11. Do not invent missing values.
 
 GOOGLE INDEPENDENT DISCOVERY:
 {google_summary}
@@ -2558,28 +2563,31 @@ LIVE SOCIAL SAMPLES:
 ANALYSIS TASK
 ========================================================
 
-Internally grade each major signal with a star rating (do not print the
-tier name):
-- ★★★ : cross-platform social + independent Google and/or Amazon support
-- ★★  : only one strong source (Google intent OR solid social/Amazon)
-- ★   : weak / single / flat signal — watch only
+Internally assess each major signal against these evidence tiers, then
+express the result ONLY as a star rating (do not print the tier name):
+- ★★★ (강한 신호): cross-platform social signal AND independent Google
+  discovery support AND/OR Amazon purchase data all point the same way
+- ★★ (주목할 신호): only ONE strong source confirms it (either Google
+  search intent OR cross-platform social/Amazon), not yet cross-confirmed
+- ★ (초기/참고 신호): single weak data point, small sample, or a
+  persistent-but-flat signal without acceleration — worth watching,
+  not yet actionable for sourcing decisions
 
-CRITICAL RULES:
-- Star rating alone is never enough. Every TOP signal must include an
-  explicit data-analysis sentence naming the platforms where it appeared
-  (use the platforms=[...] field and LIVE SOCIAL SAMPLES). Never invent
-  a platform absent from the data.
-- Prioritize FLOW over static ranking: velocity, persistence,
-  Korea→West transfer, and cross-platform confirmation.
-- Distinguish measured evidence from hypothesis.
-- Do not overstate small samples. These are directional signals.
+For each major candidate, distinguish measured evidence from hypothesis.
 
-Focus geography & themes:
+Focus on:
 - Netherlands / Western Europe
 - Germany
-- Arabic / Middle Eastern customer signals (if present in data)
-- Ingredients, product formats, and commercial-intent shifts
-- K-Beauty specific movements
+- K-Beauty
+- Arabic/Middle Eastern customer opportunities
+- ingredients
+- product formats
+- commercial intent
+- which specific SKUs a small retailer could test-order now
+
+Do not overstate small samples. These sources are directional trend signals,
+not full-population measurements. Treat each platform according to its role
+and the actual sample returned today.
 
 ========================================================
 STRICT LANGUAGE & ORDER RULES
@@ -2594,43 +2602,29 @@ Order:
 3. ENGLISH
 
 Do not include Dutch or German.
-Do NOT include shelf/display/bundle concepts.
-Do NOT write detailed "order this SKU" retail sourcing plans.
-Keep any implication short and trend-focused.
 
 --- SECTION 1 ---
 Title: 🌐 글로벌 화장품 & 스킨케어 시장 데일리 트렌드 리포트
 
 1. 📈 오늘의 TOP 5 트렌드 시그널
-For every signal:
-- Title + star rating on the same line
-  (e.g. "① 여드름 & BHA/살리실산 모공 솔루션 ★★★")
-- Right under it: short data-analysis paragraph stating WHERE it was
-  mentioned (platforms from platforms=[...] and samples) and evidence
-  strength (mentions / cross-platform / velocity).
-- 1-2 sentences of trend interpretation (not retail merchandising advice).
-Do NOT use bracket labels like [CONFIRMED].
-Do NOT output only stars without source analysis.
+For every signal, put the star rating (★★★, ★★, or ★) right after
+the signal title on the same line, e.g.
+"① 여드름 & BHA/살리실산 모공 솔루션 ★★★".
+Do NOT use bracket labels like [CONFIRMED] anywhere in the output.
 
-2. 🔄 흐름 & 가속도 분석
-Explain today's movement:
-- Which signals are accelerating vs already flat/persistent
-- Any clear Korea (K-Signal) → Western platforms transfer
-- Cross-platform confirmation strength overall
-- What the combination of sources implies about the current phase
-  of the trend (early discovery / commercial demand / sustained)
+2. 💡 리테일러 소싱 & 마케팅 전략
+Small-retailer scale only (see RETAILER CONSTRAINTS). Name 1-3 concrete
+SKUs/ingredients worth a small test order this week, plus a simple
+merchandising or social content idea for each. Focus on Netherlands/
+Western Europe, Germany, Arabic/Middle East, and K-Beauty.
 
-3. 👀 워치리스트 & 노이즈 구분
-- Early or weak signals that are rising fast enough to keep watching
-- Signals that look like one-day spikes or noise
-- Any notable regional differences (NL/Western Europe vs Germany vs
-  Arabic-related signals) if the data supports it
-
-4. 📌 짧은 시사점 (2-4문장)
-Trend-monitoring implications only. No shelf concepts, no detailed
-sourcing/marketing plans. Example tone: "PDRN 관련 신호는 한국에서
-이미 강했고 오늘 서구 SNS에서도 나타나기 시작했다 — 전이 초기 단계로
-보고 지속 여부를 추적할 가치가 있다."
+3. 💄 진열 & 번들 컨셉
+Do NOT propose developing a new private-label formulation (that is a
+manufacturer/brand-owner task, not a retailer task). Instead, propose
+a shelf/online-listing concept built from existing, sourceable
+products: e.g. how to bundle or display 2-3 real products around a
+theme, with a short customer-facing description a small shop could
+actually use.
 
 ===SPLIT_SECTION===
 
@@ -2638,20 +2632,12 @@ sourcing/marketing plans. Example tone: "PDRN 관련 신호는 한국에서
 Title: 🌐 التقرير اليومي العالمي لاتجاهات مستحضرات التجميل والعناية بالبشرة
 
 1. 📈 أهم 5 إشارات للاتجاهات اليوم
-Same structure as Korean section 1 (title + star, platform/source
-analysis, short trend interpretation). No stars-only output.
+Put the star rating (★★★, ★★, or ★) right after each signal title,
+same as in the Korean section. Do NOT use bracket labels.
 
-2. 🔄 تحليل التدفق والتسارع
-Same content focus as Korean section 2 (acceleration, Korea→West
-transfer, cross-platform strength, trend phase).
+2. 💡 استراتيجية التوريد والتسويق لتاجر تجزئة صغير (لا شركات كبرى)
 
-3. 👀 قائمة المراقبة مقابل الضوضاء
-Same content focus as Korean section 3 (watchlist, noise, regional
-differences if data supports).
-
-4. 📌 ملاحظات قصيرة
-Trend-monitoring implications only (2-4 sentences). No shelf or
-detailed sourcing advice.
+3. 💄 مفهوم عرض وتجميع المنتجات (وليس تطوير منتج جديد)
 
 ===SPLIT_SECTION===
 
@@ -2659,25 +2645,14 @@ detailed sourcing advice.
 Title: 🌐 GLOBAL COSMETICS & SKINCARE MARKET DAILY TREND REPORT
 
 1. 📈 TOP 5 TREND SIGNALS TODAY
-Same structure as Korean section 1: title + star, explicit platform/
-source analysis from the data, short trend interpretation.
-Do NOT output only the star rating.
+Put the star rating (★★★, ★★, or ★) right after each signal title.
+Do NOT use bracket labels like [CONFIRMED].
 
-2. 🔄 FLOW & ACCELERATION ANALYSIS
-- Accelerating vs flat/persistent signals
-- Korea (K-Signal) → Western transfer if present
-- Overall cross-platform confirmation
-- What this implies about the current phase of the trend
+2. 💡 SMALL RETAILER SOURCING & MARKETING STRATEGY
+Small-retailer scale only (see RETAILER CONSTRAINTS) — same content
+as the Korean section, not a literal translation requirement.
 
-3. 👀 WATCHLIST vs NOISE
-- Early/weak but rising signals worth tracking
-- Likely one-day spikes / noise
-- Regional differences (NL/Western Europe, Germany, Arabic-related)
-  only when supported by the data
-
-4. 📌 SHORT IMPLICATIONS
-2-4 sentences of trend-monitoring implications only.
-No shelf/display concepts and no detailed retailer sourcing plans.
+3. 💄 SHELF & BUNDLE CONCEPT (not new-product development)
 """
 
     return call_gemini_api(prompt)
@@ -2713,8 +2688,6 @@ def get_past_month_dates(signal_date: str) -> List[str]:
         (first_day + datetime.timedelta(days=i)).isoformat()
         for i in range(days_in_month)
     ]
-
-
 def get_past_weekday_dates(signal_date: str) -> List[str]:
     """
     이번 주(월~금)의 날짜 리스트를 반환한다.
@@ -2804,11 +2777,10 @@ def generate_weekly_summary_report(
     platform_rollup: str
 ) -> str:
     prompt = f"""
-You are a market-intelligence analyst for a Korean cosmetics (K-Beauty)
-company selling into the Netherlands and Western Europe. Focus on TRENDS
-and FLOWS — not retail merchandising or detailed sourcing plans.
+You are the CEO and Head of Sourcing for a European cosmetics and skincare
+e-commerce platform based in the Netherlands.
 
-Generate a WEEKLY K-BEAUTY / COSMETICS MARKET TREND & FLOW ROLLUP covering
+Generate a WEEKLY COSMETICS & SKINCARE MARKET ROLLUP covering
 {date_list[0]} to {date_list[-1]} (Mon-Fri), based on aggregated
 quantitative trend scores collected this week. Weekend data collection
 continues separately and is not part of this rollup.
@@ -2826,14 +2798,13 @@ ANALYSIS TASK
 Summarize the week's overall direction:
 - Which keywords held the strongest, most persistent signal all week
   (high active_days, not just a single-day spike)?
-- Which platform contributed the most this week, and what that implies
-  (Amazon-heavy = purchase-stage; TikTok-heavy = early viral; etc.)
-- Any Korea → West transfer patterns if visible in the data
-- Keywords that spiked once but did not persist (low active_days,
+- Which platform contributed the most this week, and what does that
+  imply (e.g. Amazon-heavy = purchase-stage signal, TikTok-heavy =
+  early viral signal)?
+- Any keyword that spiked once but did not persist (low active_days,
   high peak_score) should be flagged as noise, not a trend.
 
 Do not overstate small samples. Be honest about data limitations.
-Do NOT write shelf/display concepts or detailed "order this SKU" plans.
 
 ========================================================
 STRICT LANGUAGE & ORDER RULES
@@ -2847,9 +2818,9 @@ Do not include Dutch or German.
 Title: 📅 주간 화장품 & 스킨케어 트렌드 요약 ({date_list[0]} ~ {date_list[-1]})
 
 1. 🏆 이번 주 TOP 5 지속 트렌드
-2. 📊 플랫폼별 기여도 & 흐름 분석
+2. 📊 플랫폼별 기여도 분석
 3. ⚠️ 일시적 스파이크(노이즈) 주의 키워드
-4. 📌 다음 주 추적 포인트 (트렌드 모니터링 관점, 2-4문장)
+4. 💡 다음 주 소싱/마케팅 제안
 
 ===SPLIT_SECTION===
 
@@ -2857,9 +2828,9 @@ Title: 📅 주간 화장품 & 스킨케어 트렌드 요약 ({date_list[0]} ~ {
 Title: 📅 ملخص أسبوعي لاتجاهات مستحضرات التجميل والعناية بالبشرة
 
 1. 🏆 أفضل 5 اتجاهات مستمرة هذا الأسبوع
-2. 📊 تحليل مساهمة المنصات والتدفق
+2. 📊 تحليل مساهمة كل منصة
 3. ⚠️ كلمات مفتاحية قد تكون ضجة مؤقتة فقط
-4. 📌 نقاط المتابعة للأسبوع القادم
+4. 💡 اقتراحات التوريد والتسويق للأسبوع القادم
 
 ===SPLIT_SECTION===
 
@@ -2867,9 +2838,9 @@ Title: 📅 ملخص أسبوعي لاتجاهات مستحضرات التجمي
 Title: 📅 WEEKLY COSMETICS & SKINCARE TREND ROLLUP ({date_list[0]} ~ {date_list[-1]})
 
 1. 🏆 TOP 5 PERSISTENT TRENDS THIS WEEK
-2. 📊 PLATFORM CONTRIBUTION & FLOW ANALYSIS
+2. 📊 PLATFORM CONTRIBUTION ANALYSIS
 3. ⚠️ KEYWORDS THAT LOOK LIKE ONE-DAY NOISE
-4. 📌 NEXT-WEEK TRACKING POINTS (trend-monitoring only, 2-4 sentences)
+4. 💡 NEXT WEEK SOURCING/MARKETING SUGGESTIONS
 """
 
     return call_gemini_api(prompt)
@@ -2959,14 +2930,23 @@ def generate_monthly_summary_report(
     total_days = len(date_list)
 
     prompt = f"""
-You are a market-intelligence analyst for a Korean cosmetics (K-Beauty)
-company selling into the Netherlands and Western Europe. Focus on TRENDS
-and FLOWS — not retail merchandising, shelf concepts, or detailed
-sourcing plans.
+You are the owner-operator of a small, independent cosmetics and
+skincare RETAIL business (online shop, and/or a small physical store)
+based in the Netherlands. You are NOT a large distributor, wholesaler,
+or corporate sourcing department.
 
-Generate a MONTHLY K-BEAUTY / COSMETICS MARKET TREND & FLOW ROLLUP covering
+Generate a MONTHLY COSMETICS & SKINCARE MARKET ROLLUP covering
 {date_list[0]} to {date_list[-1]} ({total_days} days), based on
 aggregated quantitative trend scores collected across the whole month.
+
+RETAILER CONSTRAINTS (apply to ALL recommendations):
+- Assume small order volumes: a handful of SKUs per restock, not bulk
+  container-scale inventory.
+- Do NOT recommend exclusive supply contracts, brand-wide distribution
+  rights, warehouse-scale stock increases, or B2B-only moves.
+- DO recommend concrete next-month actions a small retailer can take:
+  which ingredients/SKUs to keep stocking, which to phase out, which
+  new ones to test, and simple merchandising/content ideas.
 
 MONTHLY KEYWORD RANKING (by aggregated trend_score, {total_days}-day window):
 {keyword_rollup}
@@ -2981,19 +2961,21 @@ ANALYSIS TASK
 Summarize the month's overall direction:
 - Which keywords held the strongest, most persistent signal across
   the WHOLE month (high active_days relative to {total_days}, not
-  just a few good days)?
-- Which platform contributed the most this month, and what that implies
-  (Amazon-heavy = purchase-stage already converting; TikTok-heavy =
-  early viral still unproven commercially).
-- Any visible Korea → West transfer patterns over the month.
-- Keywords that spiked briefly but did not persist (low active_days
-  relative to {total_days}, high peak_score) — flag as noise/hype.
-- Keywords that look fading (strong earlier, weak recently) versus
-  accelerating (weak earlier, strong recently), only if the data
-  supports that read. Do not invent trajectories.
+  just a few good days)? These are the highest-confidence candidates
+  for an actual restock or new-SKU decision.
+- Which platform contributed the most this month, and what does that
+  imply (Amazon-heavy = purchase-stage signal already converting,
+  TikTok-heavy = early viral signal still unproven commercially)?
+- Which keywords spiked briefly but did not persist across the month
+  (low active_days relative to {total_days}, high peak_score) — flag
+  these as noise/hype, not a trend worth committing budget to.
+- Note any keyword that looks like it is fading (was strong earlier
+  in the data, weak recently) versus accelerating (weak earlier,
+  strong recently), if the data supports that read. Do not invent a
+  trajectory the data does not show.
 
-Do not overstate small samples. Be honest about data limitations.
-Do NOT write shelf/display concepts or detailed "order this SKU" plans.
+Do not overstate small samples. Be honest about data limitations —
+this is still free-tier API sampling, not a full-population census.
 
 ========================================================
 STRICT LANGUAGE & ORDER RULES
@@ -3007,10 +2989,10 @@ Do not include Dutch or German.
 Title: 🗓️ 월간 화장품 & 스킨케어 트렌드 요약 ({date_list[0]} ~ {date_list[-1]})
 
 1. 🏆 이달의 TOP 5 지속 트렌드 (별점 ★★★/★★/★ 로 신뢰도 표시)
-2. 📊 플랫폼별 기여도 & 흐름 분석
+2. 📊 플랫폼별 기여도 분석
 3. 📉 반짝 스파이크였던 노이즈 키워드
 4. 📈 상승세 vs 하락세 키워드 (데이터로 확인되는 경우만)
-5. 📌 다음 달 추적 포인트 (트렌드 모니터링 관점, 2-4문장)
+5. 💡 다음 달 리테일러 소싱/진열 제안 (소규모 리테일러 기준, 대량 발주·독점계약 제안 금지)
 
 ===SPLIT_SECTION===
 
@@ -3018,10 +3000,10 @@ Title: 🗓️ 월간 화장품 & 스킨케어 트렌드 요약 ({date_list[0]} 
 Title: 🗓️ ملخص شهري لاتجاهات مستحضرات التجميل والعناية بالبشرة
 
 1. 🏆 أفضل 5 اتجاهات مستمرة هذا الشهر (تقييم بالنجوم ★★★/★★/★)
-2. 📊 تحليل مساهمة المنصات والتدفق
+2. 📊 تحليل مساهمة كل منصة
 3. 📉 كلمات مفتاحية كانت ضجة مؤقتة فقط
 4. 📈 اتجاهات صاعدة مقابل اتجاهات هابطة
-5. 📌 نقاط المتابعة للشهر القادم
+5. 💡 اقتراحات التوريد والعرض للشهر القادم (لتاجر تجزئة صغير فقط)
 
 ===SPLIT_SECTION===
 
@@ -3029,10 +3011,11 @@ Title: 🗓️ ملخص شهري لاتجاهات مستحضرات التجمي�
 Title: 🗓️ MONTHLY COSMETICS & SKINCARE TREND ROLLUP ({date_list[0]} ~ {date_list[-1]})
 
 1. 🏆 TOP 5 PERSISTENT TRENDS THIS MONTH (star rating ★★★/★★/★)
-2. 📊 PLATFORM CONTRIBUTION & FLOW ANALYSIS
+2. 📊 PLATFORM CONTRIBUTION ANALYSIS
 3. 📉 KEYWORDS THAT LOOK LIKE BRIEF NOISE/HYPE
 4. 📈 RISING VS FADING KEYWORDS (only if the data supports it)
-5. 📌 NEXT-MONTH TRACKING POINTS (trend-monitoring only, 2-4 sentences)
+5. 💡 NEXT MONTH SOURCING/MERCHANDISING SUGGESTIONS (small-retailer
+   scale only — no bulk orders or exclusive contracts)
 """
 
     return call_gemini_api(prompt)
@@ -3192,10 +3175,8 @@ def main():
         )
 
         trend_summary_str = build_trend_summary(
-            trend_scores,
-            signal_date=signal_date
+            trend_scores
         )
-
 
         freq_lines = []
 
