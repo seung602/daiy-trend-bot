@@ -36,25 +36,25 @@ _MALL_RULES = [
 # K-Signal feed mixes beauty + fashion. Prefer beauty for this dashboard.
 _BEAUTY_MALLS = {"oliveyoung", "glowpick", "hwahae"}
 _FASHION_NAME_RE = re.compile(
-    r"("
+    r"\b("
     r"skirt|pants|trousers|jeans|denim|blazer|jacket|coat|cardigan|"
     r"knit|sweater|hoodie|shirt|blouse|dress|gown|tee|t-shirt|"
     r"cargo|midi|maxi|mini skirt|wool|cotton tee|ripstop|"
     r"sneakers|shoes|boots|bag|tote|wallet|belt|cap|hat|"
     r"스커트|바지|블레이저|자켓|재킷|코트|가디건|니트|후드|"
     r"원피스|셔츠|블라우스|청바지|스니커|가방"
-    r")",
+    r")\b",
     re.IGNORECASE,
 )
 _BEAUTY_NAME_RE = re.compile(
-    r"("
+    r"\b("
     r"toner|ampoule|serum|cream|essence|cleanser|lotion|mask|"
     r"sunscreen|sunstick|sun stick|moisturizer|moisturiser|"
     r"retinol|retinal|niacinamide|peptide|pdrn|cica|centella|"
     r"spf|skincare|skin care|beauty|cosmetic|"
     r"토너|앰플|세럼|크림|에센스|클렌저|선크림|선스틱|마스크|"
     r"스킨케어|미백|보습"
-    r")",
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -265,7 +265,7 @@ def _date_window(end_date: str, days: int) -> list[str]:
     ]
 
 
-@router.get("/ranking")
+
 def _table_exists(conn, name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
@@ -321,7 +321,7 @@ def _fetch_structured_items(conn, dates: list[str]) -> list[dict]:
         )
     return items
 
-
+@router.get("/ranking")
 def ksignal_ranking(
     period: str = Query("day", pattern="^(day|week|month)$"),
     limit: int = Query(50, ge=1, le=200),
