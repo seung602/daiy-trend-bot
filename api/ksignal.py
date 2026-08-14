@@ -197,19 +197,64 @@ def _mall_counts(items: list[dict]) -> list[dict]:
 
 
 def _rank_daily(items: list[dict], limit: int) -> list[dict]:
-    items = sorted(
-        items,
+    """
+    Daily ranking:
+    - 동일 상품 중복 제거
+    - URL이 있으면 URL 기준으로 dedupe
+    - URL이 없으면 상품명 기준으로 dedupe
+    - 중복 상품 중 score가 가장 높은 항목을 대표값으로 사용
+    """
+
+    # 1. 동일 상품 그룹화
+    buckets: dict[str, list[dict]] = defaultdict(list)
+
+    for item in items:
+        product_name = (item.get("product_name") or "").strip()
+        url = (item.get("url") or "").strip()
+
+        # URL을 가장 우선적으로 사용
+        # URL이 없으면 상품명 사용
+        key = url.lower() if url else product_name.lower()
+
+        if not key:
+            continue
+
+        buckets[key].append(item)
+
+    # 2. 각 상품에서 가장 좋은 레코드 하나만 선택
+    unique_items = []
+
+    for group in buckets.values():
+        best = max(
+            group,
+            key=lambda x: (
+                x.get("score") is not None,
+                x.get("score") if x.get("score") is not None else -1,
+                x.get("velocity") if x.get("velocity") is not None else -1,
+                x.get("confidence") if x.get("confidence") is not None else -1,
+            ),
+        )
+
+        best["days_seen"] = 1
+        unique_items.append(best)
+
+    # 3. 점수 높은 순으로 정렬
+    unique_items.sort(
         key=lambda x: (
-            x["score"] is not None,
-            x["score"] if x["score"] is not None else -1,
-            x["velocity"] if x["velocity"] is not None else -1,
+            x.get("score") is not None,
+            x.get("score") if x.get("score") is not None else -1,
+            x.get("velocity") if x.get("velocity") is not None else -1,
         ),
         reverse=True,
     )
-    for i, it in enumerate(items[:limit], start=1):
-        it["rank"] = i
-        it["days_seen"] = 1
-    return items[:limit]
+
+    # 4. rank 부여
+    result = unique_items[:limit]
+
+    for i, item in enumerate(result, start=1):
+        item["rank"] = i
+
+    return result
 
 
 def _aggregate_by_product(items: list[dict], limit: int) -> list[dict]:
