@@ -35,26 +35,39 @@ def get_today_dashboard(limit: int = 10):
 
         cursor.execute("""
             SELECT
-                keyword,
-                trend_score,
-                volume_score,
-                velocity_score,
-                persistence_score,
-                cross_platform_score,
-                regional_score,
-                platform_normalized_score
-            FROM trend_scores
-            WHERE signal_date = ?
-            ORDER BY trend_score DESC
+                t.keyword,
+                t.trend_score,
+                t.volume_score,
+                t.velocity_score,
+                t.persistence_score,
+                t.cross_platform_score,
+                t.regional_score,
+                t.platform_normalized_score,
+                (
+                    SELECT GROUP_CONCAT(DISTINCT k.platform)
+                    FROM keyword_daily k
+                    WHERE k.keyword = t.keyword
+                      AND k.signal_date = t.signal_date
+                      AND k.mentions > 0
+                ) AS platforms
+            FROM trend_scores t
+            WHERE t.signal_date = ?
+            ORDER BY t.trend_score DESC
             LIMIT ?
         """, (latest_date, limit))
 
         rows = cursor.fetchall()
+        trends = []
+        for row in rows:
+            item = dict(row)
+            plats = item.pop("platforms", None) or ""
+            item["platforms"] = [p for p in plats.split(",") if p]
+            trends.append(item)
 
         return {
             "date": latest_date,
-            "count": len(rows),
-            "trends": [dict(row) for row in rows]
+            "count": len(trends),
+            "trends": trends
         }
 
     finally:

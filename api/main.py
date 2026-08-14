@@ -10,15 +10,16 @@ from api.platforms import router as platforms_router
 from api.google import router as google_router
 from api.reports import router as reports_router
 from api.dashboard import router as dashboard_router
+from api.ksignal import router as ksignal_router
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI(
-    title="K-Beauty Trend Engine API",
-    description="K-Beauty Daily Trend Engine Read-Only API",
-    version="1.1.0",
+    title="K-Beauty Trend Intelligence",
+    description="Read-only dashboard — K-Signal ranking first, Western signals secondary",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -29,6 +30,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(ksignal_router)
 app.include_router(trends_router)
 app.include_router(platforms_router)
 app.include_router(google_router)
@@ -44,7 +46,11 @@ def root():
     index = STATIC_DIR / "index.html"
     if index.exists():
         return FileResponse(index)
-    return {"status": "ok", "service": "K-Beauty Trend Engine API", "version": "1.1.0"}
+    return {
+        "status": "ok",
+        "service": "K-Beauty Trend Intelligence",
+        "version": "2.0.0",
+    }
 
 
 @app.get("/health")
