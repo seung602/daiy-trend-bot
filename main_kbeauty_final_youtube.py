@@ -2513,11 +2513,13 @@ If a Google value is NA, do not invent a number.
 You are a market-intelligence analyst for a Korean cosmetics (K-Beauty)
 company that sells into the Netherlands and Western Europe. Your job is
 NOT to write retail merchandising advice or shelf-display concepts.
-Your sole purpose is to detect and explain market TRENDS and FLOWS:
-what is rising, what is transferring from Korea to the West, what is
-sustained vs temporary noise, and where regional differences appear.
+Your sole purpose is to detect what's happening TODAY: which signals are
+real (with evidence), which look like noise, and what that means in a
+couple of plain sentences. Deep flow/lifecycle analysis (Korea→West
+transfer stages, theme trends) belongs in the WEEKLY and MONTHLY reports,
+not here — keep this one short and concrete.
 
-Generate a DAILY K-BEAUTY / COSMETICS MARKET TREND & FLOW REPORT.
+Generate a DAILY K-BEAUTY / COSMETICS MARKET TREND REPORT.
 
 {data_status}
 
@@ -2569,8 +2571,17 @@ CRITICAL RULES:
   explicit data-analysis sentence naming the platforms where it appeared
   (use the platforms=[...] field and LIVE SOCIAL SAMPLES). Never invent
   a platform absent from the data.
-- Prioritize FLOW over static ranking: velocity, persistence,
-  Korea→West transfer, and cross-platform confirmation.
+- This is a DAILY snapshot — keep language SIMPLE and DIRECT. Do NOT use
+  technical jargon like "velocity", "persistence", "acceleration", or
+  "cross-platform confirmation score" in the output text. The underlying
+  numbers exist, just describe them as natural sentences instead of
+  labeled metrics:
+  - "velocity" → describe as how fast it's showing up today
+    (e.g. "오늘 하루 만에 여러 플랫폼에서 동시에 나타났다")
+  - "persistence" → describe as how many days it's kept appearing
+    (e.g. "3일째 계속 보이고 있다")
+  - "acceleration" → describe as speeding up or slowing down in plain terms
+  Do not label these as metrics; fold them into the sentence naturally.
 - Distinguish measured evidence from hypothesis.
 - Do not overstate small samples. These are directional signals.
 
@@ -2597,60 +2608,49 @@ Do not include Dutch or German.
 Do NOT include shelf/display/bundle concepts.
 Do NOT write detailed "order this SKU" retail sourcing plans.
 Keep any implication short and trend-focused.
+Keep the WHOLE report short — this is a daily snapshot, not a deep report.
+Flow/lifecycle-stage analysis belongs in the weekly/monthly reports.
 
 --- SECTION 1 ---
 Title: 🌐 글로벌 화장품 & 스킨케어 시장 데일리 트렌드 리포트
 
-1. 📈 오늘의 TOP 5 트렌드 시그널
+1. 📊 오늘의 데이터 분석 (TOP 5)
 For every signal:
 - Title + star rating on the same line
   (e.g. "① 여드름 & BHA/살리실산 모공 솔루션 ★★★")
-- Right under it: short data-analysis paragraph stating WHERE it was
-  mentioned (platforms from platforms=[...] and samples) and evidence
-  strength (mentions / cross-platform / velocity).
-- 1-2 sentences of trend interpretation (not retail merchandising advice).
+- Right under it: a short, plain-language sentence stating WHERE it was
+  mentioned (platforms from platforms=[...] and samples), how fast it's
+  showing up today, and how many days it's kept appearing — written as
+  natural sentences, not as labeled metrics.
+- If a clear Korea→West first appearance shows up in the data, mention
+  it in one short plain sentence.
 Do NOT use bracket labels like [CONFIRMED].
 Do NOT output only stars without source analysis.
 
-2. 🔄 흐름 & 가속도 분석
-Explain today's movement:
-- Which signals are accelerating vs already flat/persistent
-- Any clear Korea (K-Signal) → Western platforms transfer
-- Cross-platform confirmation strength overall
-- What the combination of sources implies about the current phase
-  of the trend (early discovery / commercial demand / sustained)
+2. 🔇 노이즈 구분
+- Signals that look like a one-day spike, not a real trend
+- Weak signals with no cross-platform confirmation
+One short sentence per item is enough.
 
-3. 👀 워치리스트 & 노이즈 구분
-- Early or weak signals that are rising fast enough to keep watching
-- Signals that look like one-day spikes or noise
-- Any notable regional differences (NL/Western Europe vs Germany vs
-  Arabic-related signals) if the data supports it
-
-4. 📌 짧은 시사점 (2-4문장)
+3. 📌 짧은 시사점 (2-3문장)
 Trend-monitoring implications only. No shelf concepts, no detailed
-sourcing/marketing plans. Example tone: "PDRN 관련 신호는 한국에서
-이미 강했고 오늘 서구 SNS에서도 나타나기 시작했다 — 전이 초기 단계로
-보고 지속 여부를 추적할 가치가 있다."
+sourcing/marketing plans. Example tone: "PDRN 관련 신호는 오늘 여러
+플랫폼에서 동시에 나타났다 — 계속 지켜볼 가치가 있다."
 
 ===SPLIT_SECTION===
 
 --- SECTION 2 ---
 Title: 🌐 التقرير اليومي العالمي لاتجاهات مستحضرات التجميل والعناية بالبشرة
 
-1. 📈 أهم 5 إشارات للاتجاهات اليوم
-Same structure as Korean section 1 (title + star, platform/source
-analysis, short trend interpretation). No stars-only output.
+1. 📊 تحليل بيانات اليوم (أفضل 5)
+Same structure as Korean section 1 (title + star, plain-language
+platform/source analysis, no technical jargon). No stars-only output.
 
-2. 🔄 تحليل التدفق والتسارع
-Same content focus as Korean section 2 (acceleration, Korea→West
-transfer, cross-platform strength, trend phase).
+2. 🔇 تمييز الضوضاء
+Same content focus as Korean section 2.
 
-3. 👀 قائمة المراقبة مقابل الضوضاء
-Same content focus as Korean section 3 (watchlist, noise, regional
-differences if data supports).
-
-4. 📌 ملاحظات قصيرة
-Trend-monitoring implications only (2-4 sentences). No shelf or
+3. 📌 ملاحظات قصيرة
+Trend-monitoring implications only (2-3 sentences). No shelf or
 detailed sourcing advice.
 
 ===SPLIT_SECTION===
@@ -2658,25 +2658,18 @@ detailed sourcing advice.
 --- SECTION 3 ---
 Title: 🌐 GLOBAL COSMETICS & SKINCARE MARKET DAILY TREND REPORT
 
-1. 📈 TOP 5 TREND SIGNALS TODAY
+1. 📊 TODAY'S DATA ANALYSIS (TOP 5)
 Same structure as Korean section 1: title + star, explicit platform/
-source analysis from the data, short trend interpretation.
+source analysis from the data, in plain language (no "velocity" /
+"persistence" jargon — describe speed and duration as natural sentences).
 Do NOT output only the star rating.
 
-2. 🔄 FLOW & ACCELERATION ANALYSIS
-- Accelerating vs flat/persistent signals
-- Korea (K-Signal) → Western transfer if present
-- Overall cross-platform confirmation
-- What this implies about the current phase of the trend
+2. 🔇 NOISE CHECK
+- Signals that look like a one-day spike / noise
+- Weak signals with no cross-platform confirmation
 
-3. 👀 WATCHLIST vs NOISE
-- Early/weak but rising signals worth tracking
-- Likely one-day spikes / noise
-- Regional differences (NL/Western Europe, Germany, Arabic-related)
-  only when supported by the data
-
-4. 📌 SHORT IMPLICATIONS
-2-4 sentences of trend-monitoring implications only.
+3. 📌 SHORT IMPLICATIONS
+2-3 sentences of trend-monitoring implications only.
 No shelf/display concepts and no detailed retailer sourcing plans.
 """
 
@@ -2727,6 +2720,135 @@ def get_past_weekday_dates(signal_date: str) -> List[str]:
         (monday + datetime.timedelta(days=i)).isoformat()
         for i in range(5)  # Mon~Fri
     ]
+
+
+def get_preceding_dates(date_list: List[str], count: int) -> List[str]:
+    """
+    date_list의 가장 이른 날짜보다 이전에 DB에 실제로 존재하는 signal_date를
+    최대 count개까지 가져온다 (직전 기간과의 비교용).
+    주말/공휴일 등으로 데이터가 비는 날이 있어도 실제 존재하는 날짜만 쓴다.
+    """
+    if not date_list:
+        return []
+
+    conn = get_db()
+    earliest = min(date_list)
+    rows = conn.execute("""
+        SELECT DISTINCT signal_date
+        FROM trend_scores
+        WHERE signal_date < ?
+        ORDER BY signal_date DESC
+        LIMIT ?
+    """, (earliest, count)).fetchall()
+    conn.close()
+
+    return sorted(row["signal_date"] for row in rows)
+
+
+def build_period_delta(
+    current_dates: List[str],
+    previous_dates: List[str]
+) -> str:
+    """
+    이번 기간(current_dates) vs 직전 기간(previous_dates)을 비교해서
+    - 신규 진입 키워드
+    - 급상승 키워드 (직전 대비 1.5배 이상)
+    - 냉각/이탈 키워드 (직전 대비 절반 이하, 또는 이번 기간에 아예 사라짐)
+    - 한국(K-Signal) 단독이었다가 이번 기간에 처음 서구 플랫폼
+      (tiktok/instagram/amazon/youtube)에도 나타난 키워드
+    를 코드로 직접 계산해서 텍스트로 반환한다. (LLM이 숫자를 추측하지 않도록)
+    """
+    if not previous_dates:
+        return "No previous-period data available yet for comparison."
+
+    conn = get_db()
+    cur_ph = ",".join("?" for _ in current_dates)
+    prev_ph = ",".join("?" for _ in previous_dates)
+
+    cur_score_rows = conn.execute(f"""
+        SELECT keyword, SUM(trend_score) AS total_score
+        FROM trend_scores
+        WHERE signal_date IN ({cur_ph})
+        GROUP BY keyword
+    """, current_dates).fetchall()
+
+    prev_score_rows = conn.execute(f"""
+        SELECT keyword, SUM(trend_score) AS total_score
+        FROM trend_scores
+        WHERE signal_date IN ({prev_ph})
+        GROUP BY keyword
+    """, previous_dates).fetchall()
+
+    cur_platform_rows = conn.execute(f"""
+        SELECT DISTINCT keyword, platform
+        FROM keyword_daily
+        WHERE signal_date IN ({cur_ph})
+    """, current_dates).fetchall()
+
+    prev_platform_rows = conn.execute(f"""
+        SELECT DISTINCT keyword, platform
+        FROM keyword_daily
+        WHERE signal_date IN ({prev_ph})
+    """, previous_dates).fetchall()
+
+    conn.close()
+
+    cur_scores = {r["keyword"]: r["total_score"] for r in cur_score_rows}
+    prev_scores = {r["keyword"]: r["total_score"] for r in prev_score_rows}
+
+    cur_platforms: Dict[str, set] = {}
+    for r in cur_platform_rows:
+        cur_platforms.setdefault(r["keyword"], set()).add(r["platform"])
+
+    prev_platforms: Dict[str, set] = {}
+    for r in prev_platform_rows:
+        prev_platforms.setdefault(r["keyword"], set()).add(r["platform"])
+
+    new_entries, rising, cooling, kr_to_west = [], [], [], []
+    western_platforms = {"tiktok", "instagram", "amazon", "youtube"}
+
+    for kw in set(cur_scores) | set(prev_scores):
+        cur_s = cur_scores.get(kw, 0.0)
+        prev_s = prev_scores.get(kw, 0.0)
+        cur_p = cur_platforms.get(kw, set())
+        prev_p = prev_platforms.get(kw, set())
+
+        if prev_s == 0 and cur_s > 0:
+            new_entries.append((kw, cur_s))
+        elif prev_s > 0 and cur_s == 0:
+            cooling.append((kw, prev_s, 0.0))
+        elif prev_s > 0 and cur_s >= prev_s * 1.5:
+            rising.append((kw, prev_s, cur_s))
+        elif prev_s > 0 and cur_s <= prev_s * 0.5:
+            cooling.append((kw, prev_s, cur_s))
+
+        was_kr_only = bool(prev_p) and prev_p.issubset({"k_signal"})
+        now_has_west = bool(cur_p & western_platforms)
+        had_west_before = bool(prev_p & western_platforms)
+        if was_kr_only and now_has_west and not had_west_before:
+            kr_to_west.append(kw)
+
+    new_entries.sort(key=lambda x: -x[1])
+    rising.sort(key=lambda x: -(x[2] - x[1]))
+    cooling.sort(key=lambda x: (x[1] - x[2]) * -1 if x[2] else -x[1])
+
+    lines = []
+    lines.append("NEW ENTRIES (no score in previous period, present now):")
+    lines += [f"- {kw}: score={s:.1f}" for kw, s in new_entries[:15]] or ["- none"]
+    lines.append("")
+    lines.append("RISING (>=1.5x previous period's score):")
+    lines += [f"- {kw}: {p:.1f} -> {c:.1f}" for kw, p, c in rising[:15]] or ["- none"]
+    lines.append("")
+    lines.append("COOLING (<=0.5x previous period's score, or disappeared):")
+    lines += [f"- {kw}: {p:.1f} -> {c:.1f}" for kw, p, c in cooling[:15]] or ["- none"]
+    lines.append("")
+    lines.append(
+        "KOREA-ONLY -> WESTERN PLATFORM "
+        "(k_signal-only last period, now also on tiktok/instagram/amazon/youtube):"
+    )
+    lines += [f"- {kw}" for kw in kr_to_west[:15]] or ["- none"]
+
+    return "\n".join(lines)
 
 
 def build_weekly_rollup(date_list: List[str]) -> Tuple[str, str]:
@@ -2801,7 +2923,8 @@ def build_weekly_rollup(date_list: List[str]) -> Tuple[str, str]:
 def generate_weekly_summary_report(
     date_list: List[str],
     keyword_rollup: str,
-    platform_rollup: str
+    platform_rollup: str,
+    delta_text: str
 ) -> str:
     prompt = f"""
 You are a market-intelligence analyst for a Korean cosmetics (K-Beauty)
@@ -2819,20 +2942,40 @@ WEEKLY KEYWORD RANKING (by aggregated trend_score):
 WEEKLY PLATFORM BREAKDOWN (TikTok / Amazon / Instagram / Google):
 {platform_rollup}
 
+WEEK-OVER-WEEK DELTA (computed directly from the database, not estimated —
+this compares this week to the most recent previous period of data on file):
+{delta_text}
+
 ========================================================
 ANALYSIS TASK
 ========================================================
 
-Summarize the week's overall direction:
-- Which keywords held the strongest, most persistent signal all week
-  (high active_days, not just a single-day spike)?
-- Which platform contributed the most this week, and what that implies
-  (Amazon-heavy = purchase-stage; TikTok-heavy = early viral; etc.)
-- Any Korea → West transfer patterns if visible in the data
-- Keywords that spiked once but did not persist (low active_days,
-  high peak_score) should be flagged as noise, not a trend.
+This is a FLOW report — the point is to show what CHANGED, not just what
+ranked highest. Use the WEEK-OVER-WEEK DELTA block above as ground truth
+for "new / rising / cooling / Korea→West transfer" — do not invent items
+that aren't in it, and do not skip it just because the keyword ranking
+list looks similar.
 
-Do not overstate small samples. Be honest about data limitations.
+For every keyword you highlight as a major signal (new, rising, or a
+Korea→West transfer), tag it with ONE lifecycle stage based on its
+current platform mix and the delta data:
+- 🇰🇷 한국 선행 : k_signal(한국 국내 소스)에서만 보이고 서구 플랫폼엔 아직 없음
+- 🌉 전이 초기 : 한국 신호 + 서구 SNS(TikTok/Instagram/YouTube)에 약하게 등장
+- ✅ 서구 확인 : 여러 플랫폼(TikTok/Instagram/Amazon/Google 등)에서 동시에 확인됨
+- 📉 냉각/둔화 : 한때 강했지만 이번 주 점수/언급이 크게 줄어듦
+
+Also group related keywords into 2-4 THEMES (not a flat keyword list) using
+categories like: 성분(ingredient), 피부 고민(concern), 제품 포맷(format).
+Explain the theme's direction as a whole, then mention the 1-2 keywords
+that best represent it. Example: "장벽·회복 테마가 한국에서 서구로 이동 중이며,
+그중 PDRN이 가장 빠르게 확산되고 있다" is more useful than listing PDRN alone.
+
+Also identify which platform contributed the most this week and what that
+implies (Amazon-heavy = purchase-stage; TikTok-heavy = early viral; etc.).
+
+Do not overstate small samples. Be honest about data limitations — if the
+delta block says "No previous-period data available yet", say so plainly
+instead of fabricating a comparison.
 Do NOT write shelf/display concepts or detailed "order this SKU" plans.
 
 ========================================================
@@ -2846,30 +2989,44 @@ Do not include Dutch or German.
 --- SECTION 1 ---
 Title: 📅 주간 화장품 & 스킨케어 트렌드 요약 ({date_list[0]} ~ {date_list[-1]})
 
-1. 🏆 이번 주 TOP 5 지속 트렌드
-2. 📊 플랫폼별 기여도 & 흐름 분석
-3. ⚠️ 일시적 스파이크(노이즈) 주의 키워드
-4. 📌 다음 주 추적 포인트 (트렌드 모니터링 관점, 2-4문장)
+1. 🔄 이번 주 핵심 변화
+   신규 진입 / 급상승 / 냉각 / 한국→서구 첫 전이 키워드를 DELTA 데이터
+   기준으로 짧게 짚어준다. 각 항목에 라이프사이클 태그(🇰🇷/🌉/✅/📉)를 붙인다.
+2. 🧩 테마로 보기
+   개별 키워드 대신 2-4개 테마로 묶어서 상위 흐름을 설명한다.
+3. 🏆 이번 주 가장 꾸준했던 트렌드 TOP 5
+   (하루 반짝이 아니라 한 주 내내 지속된 것 — active_days 기준)
+4. 📊 플랫폼별 기여도
+5. ⚠️ 일시적 스파이크(노이즈) 주의 키워드
+6. 📌 다음 주 추적 포인트 (트렌드 모니터링 관점, 2-4문장)
 
 ===SPLIT_SECTION===
 
 --- SECTION 2 ---
 Title: 📅 ملخص أسبوعي لاتجاهات مستحضرات التجميل والعناية بالبشرة
 
-1. 🏆 أفضل 5 اتجاهات مستمرة هذا الأسبوع
-2. 📊 تحليل مساهمة المنصات والتدفق
-3. ⚠️ كلمات مفتاحية قد تكون ضجة مؤقتة فقط
-4. 📌 نقاط المتابعة للأسبوع القادم
+1. 🔄 أهم التغييرات هذا الأسبوع (جديد / صاعد / يبرد / أول انتقال من كوريا للغرب،
+   مع وسم مرحلة كل إشارة 🇰🇷/🌉/✅/📉)
+2. 🧩 التجميع حسب الثيمات (2-4 ثيمات بدلاً من كلمات مفردة)
+3. 🏆 أكثر 5 اتجاهات ثباتاً هذا الأسبوع
+4. 📊 تحليل مساهمة المنصات
+5. ⚠️ كلمات مفتاحية قد تكون ضجة مؤقتة فقط
+6. 📌 نقاط المتابعة للأسبوع القادم
 
 ===SPLIT_SECTION===
 
 --- SECTION 3 ---
 Title: 📅 WEEKLY COSMETICS & SKINCARE TREND ROLLUP ({date_list[0]} ~ {date_list[-1]})
 
-1. 🏆 TOP 5 PERSISTENT TRENDS THIS WEEK
-2. 📊 PLATFORM CONTRIBUTION & FLOW ANALYSIS
-3. ⚠️ KEYWORDS THAT LOOK LIKE ONE-DAY NOISE
-4. 📌 NEXT-WEEK TRACKING POINTS (trend-monitoring only, 2-4 sentences)
+1. 🔄 KEY CHANGES THIS WEEK
+   New / rising / cooling / first Korea→West transfer keywords, from the
+   DELTA data above. Tag each with a lifecycle stage (🇰🇷/🌉/✅/📉).
+2. 🧩 THEMES, NOT JUST KEYWORDS
+   Group into 2-4 themes and describe the overall direction of each.
+3. 🏆 TOP 5 MOST CONSISTENT TRENDS THIS WEEK (by active_days, not spikes)
+4. 📊 PLATFORM CONTRIBUTION
+5. ⚠️ KEYWORDS THAT LOOK LIKE ONE-DAY NOISE
+6. 📌 NEXT-WEEK TRACKING POINTS (trend-monitoring only, 2-4 sentences)
 """
 
     return call_gemini_api(prompt)
@@ -2923,432 +3080,4 @@ def build_monthly_rollup(date_list: List[str]) -> Tuple[str, str]:
     keyword_lines = []
     for row in keyword_rows:
         keyword_lines.append(
-            f"- {row['keyword']}: "
-            f"avg_score={row['avg_score']:.1f}, "
-            f"peak_score={row['peak_score']:.1f}, "
-            f"active_days={row['active_days']}/{total_days}"
-        )
-
-    platform_lines = []
-    for row in platform_rows:
-        platform_lines.append(
-            f"- {row['platform']}: "
-            f"mentions={row['total_mentions']}, "
-            f"unique_keywords={row['unique_keywords']}"
-        )
-
-    keyword_text = (
-        "\n".join(keyword_lines)
-        if keyword_lines
-        else "No monthly keyword data."
-    )
-    platform_text = (
-        "\n".join(platform_lines)
-        if platform_lines
-        else "No monthly platform data."
-    )
-
-    return keyword_text, platform_text
-
-
-def generate_monthly_summary_report(
-    date_list: List[str],
-    keyword_rollup: str,
-    platform_rollup: str
-) -> str:
-    total_days = len(date_list)
-
-    prompt = f"""
-You are a market-intelligence analyst for a Korean cosmetics (K-Beauty)
-company selling into the Netherlands and Western Europe. Focus on TRENDS
-and FLOWS — not retail merchandising, shelf concepts, or detailed
-sourcing plans.
-
-Generate a MONTHLY K-BEAUTY / COSMETICS MARKET TREND & FLOW ROLLUP covering
-{date_list[0]} to {date_list[-1]} ({total_days} days), based on
-aggregated quantitative trend scores collected across the whole month.
-
-MONTHLY KEYWORD RANKING (by aggregated trend_score, {total_days}-day window):
-{keyword_rollup}
-
-MONTHLY PLATFORM BREAKDOWN (TikTok / Amazon / Instagram / Google):
-{platform_rollup}
-
-========================================================
-ANALYSIS TASK
-========================================================
-
-Summarize the month's overall direction:
-- Which keywords held the strongest, most persistent signal across
-  the WHOLE month (high active_days relative to {total_days}, not
-  just a few good days)?
-- Which platform contributed the most this month, and what that implies
-  (Amazon-heavy = purchase-stage already converting; TikTok-heavy =
-  early viral still unproven commercially).
-- Any visible Korea → West transfer patterns over the month.
-- Keywords that spiked briefly but did not persist (low active_days
-  relative to {total_days}, high peak_score) — flag as noise/hype.
-- Keywords that look fading (strong earlier, weak recently) versus
-  accelerating (weak earlier, strong recently), only if the data
-  supports that read. Do not invent trajectories.
-
-Do not overstate small samples. Be honest about data limitations.
-Do NOT write shelf/display concepts or detailed "order this SKU" plans.
-
-========================================================
-STRICT LANGUAGE & ORDER RULES
-========================================================
-
-The report MUST contain exactly THREE sections separated by
-===SPLIT_SECTION===, in this order: KOREAN, ARABIC, ENGLISH.
-Do not include Dutch or German.
-
---- SECTION 1 ---
-Title: 🗓️ 월간 화장품 & 스킨케어 트렌드 요약 ({date_list[0]} ~ {date_list[-1]})
-
-1. 🏆 이달의 TOP 5 지속 트렌드 (별점 ★★★/★★/★ 로 신뢰도 표시)
-2. 📊 플랫폼별 기여도 & 흐름 분석
-3. 📉 반짝 스파이크였던 노이즈 키워드
-4. 📈 상승세 vs 하락세 키워드 (데이터로 확인되는 경우만)
-5. 📌 다음 달 추적 포인트 (트렌드 모니터링 관점, 2-4문장)
-
-===SPLIT_SECTION===
-
---- SECTION 2 ---
-Title: 🗓️ ملخص شهري لاتجاهات مستحضرات التجميل والعناية بالبشرة
-
-1. 🏆 أفضل 5 اتجاهات مستمرة هذا الشهر (تقييم بالنجوم ★★★/★★/★)
-2. 📊 تحليل مساهمة المنصات والتدفق
-3. 📉 كلمات مفتاحية كانت ضجة مؤقتة فقط
-4. 📈 اتجاهات صاعدة مقابل اتجاهات هابطة
-5. 📌 نقاط المتابعة للشهر القادم
-
-===SPLIT_SECTION===
-
---- SECTION 3 ---
-Title: 🗓️ MONTHLY COSMETICS & SKINCARE TREND ROLLUP ({date_list[0]} ~ {date_list[-1]})
-
-1. 🏆 TOP 5 PERSISTENT TRENDS THIS MONTH (star rating ★★★/★★/★)
-2. 📊 PLATFORM CONTRIBUTION & FLOW ANALYSIS
-3. 📉 KEYWORDS THAT LOOK LIKE BRIEF NOISE/HYPE
-4. 📈 RISING VS FADING KEYWORDS (only if the data supports it)
-5. 📌 NEXT-MONTH TRACKING POINTS (trend-monitoring only, 2-4 sentences)
-"""
-
-    return call_gemini_api(prompt)
-
-
-# ============================================================
-# 17. Telegram
-# ============================================================
-
-def send_telegram_message(message: str):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        logging.warning("Telegram credentials missing. Message not sent.")
-        return
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
-    max_length = 4000
-    chunks = [
-        message[i:i + max_length]
-        for i in range(0, len(message), max_length)
-    ]
-
-    for chunk in chunks:
-        try:
-            res = session.post(
-                url,
-                json={
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "text": chunk
-                },
-                timeout=15
-            )
-
-            if res.status_code != 200:
-                logging.warning(
-                    "Telegram failed HTTP %s: %s",
-                    res.status_code, res.text
-                )
-
-        except Exception as e:
-            logging.error(
-                "Telegram notification failed: %s", e
-            )
-
-
-# ============================================================
-# 18. Main Pipeline
-# ============================================================
-
-def main():
-    logging.info("=== Daily Cosmetics Trend Bot Started ===")
-
-    try:
-        init_database()
-
-        signal_date = get_today_iso()
-        regions = ["NL", "DE"]
-
-        logging.info(
-            "This week's dynamic keyword pool (%s): %s",
-            get_iso_week_id(), get_weekly_dynamic_pool()
-        )
-        logging.info(
-            "Today's TikTok queries: %s",
-            get_today_tiktok_queries()
-        )
-        logging.info(
-            "Today's Instagram Apify tags: %s",
-            get_today_apify_instagram_tags()
-        )
-        logging.info(
-            "Today's Google groups: %s",
-            get_today_google_group_names()
-        )
-
-        # ----------------------------------------------------
-        # 1. Google independent discovery
-        # ----------------------------------------------------
-        logging.info(
-            "Collecting independent Google beauty signals..."
-        )
-
-        google_data = collect_google_independent_signals(
-            signal_date, regions
-        )
-
-        for region, items in google_data.items():
-            logging.info(
-                "Google autocomplete accepted signals [%s]: %d",
-                region, len(items)
-            )
-
-        # Daily general RSS는 보조적인 시장 context로만 저장
-        google_nl_rss = fetch_google_daily_rss("NL", 15)
-        google_de_rss = fetch_google_daily_rss("DE", 15)
-
-        save_google_daily_rss(
-            signal_date, "NL", google_nl_rss
-        )
-        save_google_daily_rss(
-            signal_date, "DE", google_de_rss
-        )
-
-        # ----------------------------------------------------
-        # 2. Social signals
-        # ----------------------------------------------------
-        logging.info("Fetching TikTok...")
-        tiktok_signals = fetch_tiktok_captions()
-
-        logging.info("Fetching Amazon...")
-        amazon_signals = fetch_amazon_products()
-
-        logging.info("Fetching Instagram via Apify...")
-        instagram_signals = fetch_instagram_apify()
-
-        logging.info("Fetching K-Signal /v1/signals...")
-        k_signal_signals = fetch_k_signal()
-        k_signal_teaser = []  # timeout/추가 호출을 피하기 위해 teaser endpoint는 사용하지 않음
-
-        logging.info("Fetching YouTube via official Data API v3...")
-        youtube_signals = fetch_youtube_trends()
-
-        all_signals = (
-            tiktok_signals +
-            amazon_signals +
-            instagram_signals +
-            k_signal_signals +
-            k_signal_teaser +
-            youtube_signals
-        )
-
-        save_raw_signals(all_signals)
-
-        # ----------------------------------------------------
-        # 3. Social keyword counts
-        # ----------------------------------------------------
-        daily_counts = build_daily_keyword_counts(
-            all_signals
-        )
-
-        save_keyword_counts(
-            signal_date,
-            daily_counts
-        )
-
-        # ----------------------------------------------------
-        # 4. Social trend scores
-        # ----------------------------------------------------
-        trend_scores = calculate_trend_scores(
-            signal_date,
-            daily_counts
-        )
-
-        save_trend_scores(
-            signal_date,
-            trend_scores
-        )
-
-        trend_summary_str = build_trend_summary(
-            trend_scores,
-            signal_date=signal_date
-        )
-
-
-        freq_lines = []
-
-        for item in trend_scores[:20]:
-            freq_lines.append(
-                f"- {item['keyword']}: "
-                f"{item['today_mentions']} mentions"
-            )
-
-        freq_summary_str = (
-            "\n".join(freq_lines)
-            if freq_lines
-            else "No vocabulary frequency data today."
-        )
-
-        # ----------------------------------------------------
-        # 5. Google summary
-        # ----------------------------------------------------
-        google_summary = get_google_summary(
-            signal_date, regions
-        )
-
-        google_candidates = get_google_candidate_list(
-            signal_date, 30
-        )
-
-        # ----------------------------------------------------
-        # 6. Gemini
-        # ----------------------------------------------------
-        logging.info("Generating Gemini report...")
-
-        report = generate_gemini_report(
-            google_summary=google_summary,
-            google_candidates=google_candidates,
-            social_data=all_signals,
-            freq_summary=freq_summary_str,
-            trend_summary=trend_summary_str
-        )
-
-        # ----------------------------------------------------
-        # 7. Telegram
-        # ----------------------------------------------------
-        sections = [
-            section.strip()
-            for section
-            in report.split("===SPLIT_SECTION===")
-            if section.strip()
-        ]
-
-        for index, section in enumerate(sections):
-            logging.info(
-                "Sending report section %d/%d",
-                index + 1, len(sections)
-            )
-            send_telegram_message(section)
-
-        # ----------------------------------------------------
-        # 8. Weekly rollup (토요일에만 추가 발송, 데이터 수집은 계속됨)
-        # ----------------------------------------------------
-        if is_weekly_summary_day():
-            try:
-                logging.info(
-                    "Today is the weekly summary day - "
-                    "building weekly rollup..."
-                )
-
-                week_dates = get_past_weekday_dates(signal_date)
-                keyword_rollup, platform_rollup = build_weekly_rollup(
-                    week_dates
-                )
-
-                weekly_report = generate_weekly_summary_report(
-                    week_dates, keyword_rollup, platform_rollup
-                )
-
-                weekly_sections = [
-                    section.strip()
-                    for section
-                    in weekly_report.split("===SPLIT_SECTION===")
-                    if section.strip()
-                ]
-
-                for index, section in enumerate(weekly_sections):
-                    logging.info(
-                        "Sending weekly report section %d/%d",
-                        index + 1, len(weekly_sections)
-                    )
-                    send_telegram_message(section)
-
-            except Exception as e:
-                logging.error(
-                    "Weekly rollup failed (daily report already sent): %s",
-                    e, exc_info=True
-                )
-                send_telegram_error(
-                    f"Weekly rollup failed: {str(e)} "
-                    "(daily report was sent successfully)"
-                )
-
-        # ----------------------------------------------------
-        # 9. Monthly rollup (매월 말일에만 추가 발송, 데이터 수집은 계속됨)
-        # ----------------------------------------------------
-        if is_monthly_summary_day():
-            try:
-                logging.info(
-                    "Today is the monthly summary day - "
-                    "building monthly rollup..."
-                )
-
-                month_dates = get_past_month_dates(signal_date)
-                keyword_rollup, platform_rollup = build_monthly_rollup(
-                    month_dates
-                )
-
-                monthly_report = generate_monthly_summary_report(
-                    month_dates, keyword_rollup, platform_rollup
-                )
-
-                monthly_sections = [
-                    section.strip()
-                    for section
-                    in monthly_report.split("===SPLIT_SECTION===")
-                    if section.strip()
-                ]
-
-                for index, section in enumerate(monthly_sections):
-                    logging.info(
-                        "Sending monthly report section %d/%d",
-                        index + 1, len(monthly_sections)
-                    )
-                    send_telegram_message(section)
-
-            except Exception as e:
-                logging.error(
-                    "Monthly rollup failed (daily report already sent): %s",
-                    e, exc_info=True
-                )
-                send_telegram_error(
-                    f"Monthly rollup failed: {str(e)} "
-                    "(daily report was sent successfully)"
-                )
-
-        logging.info("Monthly API quota snapshot: %s", get_monthly_quota_snapshot())
-        logging.info(
-            "=== Daily Cosmetics Trend Bot Completed Successfully ==="
-        )
-
-    except Exception as e:
-        err_msg = f"Pipeline execution failed: {str(e)}"
-        logging.error(err_msg, exc_info=True)
-        send_telegram_error(err_msg)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
+            f"- {row['keyword
