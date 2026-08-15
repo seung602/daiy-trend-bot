@@ -2682,13 +2682,25 @@ No shelf/display concepts and no detailed retailer sourcing plans.
 
 WEEKLY_SUMMARY_WEEKDAY = 5  # Python date.weekday(): Mon=0 ... Sat=5, Sun=6
 
+# 연습/테스트용: 이 환경변수를 true로 주면 요일/월말 여부와 상관없이
+# 주간·월간 리포트를 매번 생성해서 텔레그램까지 발송한다.
+# 실제 운영(GitHub Actions 정기 실행)에서는 이 값을 설정하지 않으면
+# 기존 스케줄(토요일 / 매월 마지막 날) 그대로 동작한다.
+FORCE_ROLLUPS = os.getenv("FORCE_ROLLUPS", "").strip().lower() in (
+    "1", "true", "yes"
+)
+
 
 def is_weekly_summary_day() -> bool:
+    if FORCE_ROLLUPS:
+        return True
     return get_market_now().date().weekday() == WEEKLY_SUMMARY_WEEKDAY
 
 
 def is_monthly_summary_day() -> bool:
     """그 달의 마지막 날에만 True (매일 도는 워크플로우 기준)."""
+    if FORCE_ROLLUPS:
+        return True
     today = get_market_now().date()
     last_day = calendar.monthrange(today.year, today.month)[1]
     return today.day == last_day
@@ -3068,16 +3080,4 @@ def build_monthly_rollup(date_list: List[str]) -> Tuple[str, str]:
         SELECT
             platform,
             SUM(mentions) AS total_mentions,
-            COUNT(DISTINCT keyword) AS unique_keywords
-        FROM keyword_daily
-        WHERE signal_date IN ({placeholders})
-        GROUP BY platform
-        ORDER BY total_mentions DESC
-    """, date_list).fetchall()
-
-    conn.close()
-
-    keyword_lines = []
-    for row in keyword_rows:
-        keyword_lines.append(
-            f"- {row['keyword
+            COU
