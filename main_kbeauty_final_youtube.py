@@ -17,6 +17,24 @@ import xml.etree.ElementTree as ET
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+# ============================================================
+# SCORING V2 — 플랫폼 가중치 + EMA + Z-score + Novelty
+# ============================================================
+
+PLATFORM_WEIGHTS = {
+    "tiktok": 1.5,     # 트렌드 선도 (가장 빠름)
+    "instagram": 1.2,  # 확산 중
+    "youtube": 1.0,    # 기준 (안정화)
+    "amazon": 0.9,     # 실제 구매
+    "google": 0.8,     # 검색 의도 (늦게 감지)
+}
+
+def _platform_weight(platform):
+    p = (platform or "").lower()
+    for key, w in PLATFORM_WEIGHTS.items():
+        if key in p:
+            return w
+    return 1.0
 
 # ============================================================
 # 0. 기본 설정
