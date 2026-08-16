@@ -31,7 +31,7 @@ jobs:
           RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-        run: python main_kbeauty_final_youtube.py
+        run: python run_trends_v2.py
 
       - name: Commit trend database
         if: success()
