@@ -47,6 +47,6 @@ jobs:
             git push
           fi
 
-      # 통합 웹 서버 재배포 트리거 (단 1번만 실행)
+      # 통합 웹 서버 재배포 트리거
       - name: Trigger unified web deploy
         run: curl -fsS -X POST "https://api.render.com/deploy/srv-da0k57dbedkc73auvn5g?key=MydIcmRe06I"
