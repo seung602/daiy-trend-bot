@@ -16,8 +16,8 @@ from urllib3.util.retry import Retry
 # ============================================================
 # 0. Gemini 모델 설정 (3.7 최신 → 3.6 fallback)
 # ============================================================
-GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "gemini-3.7-flash").strip()
-GEMINI_FALLBACK_MODEL = "gemini-3.6-flash"
+GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "Gemini 3.5 Flash Lite").strip()
+GEMINI_FALLBACK_MODEL = "Gemini 3.5 Flash Lite"
 
 # ============================================================
 # 1. 플랫폼 가중치 + 라이프사이클 라벨
@@ -147,9 +147,23 @@ apify_session = requests.Session()
 def get_market_now(): return datetime.datetime.now(MARKET_TZ)
 def get_today_iso(): return get_market_now().date().isoformat()
 def rotation_index(length): return (get_market_now().date() - datetime.date(2026,1,1)).days % length if length > 0 else 0
+
 def _clean_text(v): return re.sub(r"\s+", " ", (v or "")).strip()
 def _clean_instagram_tag(v): return re.sub(r"[^a-z0-9_]", "", (v or "").lower().replace(" ", ""))
-def _dedupe(seq): seen, out = set(), []; [out.append(v) for v in (seq or []) if v and (v:=v.strip()) and v.lower() not in seen and not seen.add(v.lower())]; return out
+
+def _dedupe(seq: List[str]) -> List[str]:
+    seen = set()
+    out = []
+    for v in (seq or []):
+        if not v: continue
+        v = v.strip()
+        if not v: continue
+        key = v.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(v)
+    return out
+
 def _normalize_entity(e): return re.sub(r"\s+", " ", re.sub(r"[^\w\s-]", " ", (e or "").lower())).strip()[:45]
 def _sha256(t): return hashlib.sha256((t or "").encode("utf-8")).hexdigest()
 def _chunks(lst, n):
