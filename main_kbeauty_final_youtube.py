@@ -10,7 +10,6 @@ import math
 from collections import Counter
 from typing import List, Dict, Tuple, Optional
 from zoneinfo import ZoneInfo
-
 import time
 import requests
 import xml.etree.ElementTree as ET
@@ -18,18 +17,18 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ============================================================
-# SCORING V2 — 플랫폼 가중치 + EMA + Z-score + Novelty
+# SCORING V3 — 플랫폼 가중치 + EMA + Z-score + Lifecycle + Theme
+# 추가 API 호출 없음. 기존 수집 예산 그대로 사용.
 # ============================================================
-
 PLATFORM_WEIGHTS = {
-    "tiktok": 1.5,     # 트렌드 선도 (가장 빠름)
-    "instagram": 1.2,  # 확산 중
-    "youtube": 1.0,    # 기준 (안정화)
-    "amazon": 0.9,     # 실제 구매
-    "google": 0.8,     # 검색 의도 (늦게 감지)
+    "tiktok": 1.5,
+    "instagram": 1.2,
+    "youtube": 1.0,
+    "amazon": 0.9,
+    "google": 0.8,
 }
 
-def _platform_weight(platform):
+def _platform_weight(platform: str) -> float:
     p = (platform or "").lower()
     for key, w in PLATFORM_WEIGHTS.items():
         if key in p:
@@ -39,7 +38,6 @@ def _platform_weight(platform):
 # ============================================================
 # 0. 기본 설정
 # ============================================================
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
@@ -47,7 +45,6 @@ logging.basicConfig(
 
 MARKET_TZ = ZoneInfo("Europe/Amsterdam")
 DB_PATH = os.getenv("TREND_DB_PATH", "beauty_trends.db")
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -55,48 +52,27 @@ RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 APIFY_TOKEN = os.getenv("APIFY_TOKEN")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
-# Gemini: 빈 환경변수로 기본 모델이 덮어써지는 문제를 방지한다.
-GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "gemini-3.6-flash").strip()
-GEMINI_FALLBACK_MODEL = "gemini-3.5-flash-lite"
+GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "gemini-1.5-flash").strip()
+GEMINI_FALLBACK_MODEL = "gemini-1.5-flash-8b"
 
-# tiktok-scraper7 (tikwm) 유료 플랜 실측 한도: 300 requests/month (hard limit),
-# 120 requests/minute. 월간 한도 기준 하루 9회로 고정한다 (9 * 31일 = 279 <= 300,
-# 재시도/여유분을 감안해 10이 아닌 9로 설정).
 TIKTOK_DAILY_LIMIT = 9
-TIKTOK_QUERY_COUNT = 50  # 요청 1회당 가져오는 최대 영상 수 (쿼터는 호출 수 기준이므로 부담 없음)
+TIKTOK_QUERY_COUNT = 50
 
-# Instagram은 Apify의 공식 유지 Actor(apify/instagram-scraper)를 사용한다.
-# Free plan에서 이 Actor의 결과 단가는 $2.70/1,000 results.
-# $5.00 무료 크레딧 기준 이론상 한도는 1,851건($5.00 / $2.70 * 1000).
-# 진짜 안전장치는 월간 캡(아래 1,800건=$4.86)이다. 하루 캡은 태그당 배분량을
-# 정하는 목표치일 뿐이고, remaining이 월간 캡에 의해 자동으로 줄어들기 때문에
-# 하루 캡을 다소 넉넉히 잡아도(60 x 31일 = 1,860건, 단독으로는 $5.02로 살짝
-# 초과) 실제로는 월중 어느 시점에 월간 캡에서 자연스럽게 멈춘다 - 이번 달
-# 며칠 일찍 예산을 다 쓰고 그 뒤에는 0건 수집으로 안전하게 유지된다.
-# 태그당 12건(5개 태그 x 12 = 60) 목표.
 APIFY_INSTAGRAM_ENABLED = True
 APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT = 1800
 APIFY_INSTAGRAM_DAILY_RESULT_LIMIT = 60
 APIFY_INSTAGRAM_ACTOR = "apify/instagram-scraper"
 
-# Amazon은 "구매 전환 신호"로 활용한다 (SNS의 화제성 신호와 상호보완).
 AMAZON_DAILY_LIMIT = 3
-AMAZON_QUERY_COUNT = 50  # /search 응답에서 최대로 취할 상품 수 (실제 페이지당 반환 수는 API 쪽 상한을 따름)
-
-# [제거됨] K-Signal(한국 국내 랭킹 가속도 기반 선행 지표)은 더 이상 이 파이프라인에서
-# 다루지 않는다. 한국 화장품 랭킹은 추후 별도의 자체 API/웹사이트로 분리해서
-# 구축할 예정이므로, 이 스크립트는 서구권(네덜란드/독일/벨기에/아랍계 유럽) 시장의
-# 성분·트렌드 관심도 추적에만 집중한다.
+AMAZON_QUERY_COUNT = 50
 
 AMAZON_QUERY_ROTATION = [
-    # Category / product discovery
     ["skincare", "skincare essentials", "facial skincare"],
     ["face serum", "ampoule", "essence"],
     ["moisturizer", "face cream", "barrier repair cream"],
     ["cleanser", "toner", "face mask"],
     ["sunscreen face", "sun stick", "spf 50 sunscreen"],
     ["eye cream", "anti aging cream", "brightening cream"],
-    # Ingredients
     ["retinol serum", "retinal serum", "bakuchiol serum"],
     ["niacinamide serum", "vitamin c serum", "tranexamic acid serum"],
     ["pdrn serum", "pdrn skincare", "polynucleotide serum"],
@@ -105,29 +81,20 @@ AMAZON_QUERY_ROTATION = [
     ["azelaic acid", "salicylic acid serum", "snail mucin"],
     ["propolis skincare", "centella cica", "spicule serum"],
     ["hyaluronic acid serum", "panthenol cream", "fermented skincare"],
-    # Skin concerns
     ["acne skincare", "blemish serum", "pore care"],
     ["hyperpigmentation", "dark spot serum", "brightening serum"],
     ["sensitive skin", "redness skincare", "rosacea skincare"],
     ["dry skin", "dehydrated skin", "hydrating serum"],
     ["anti aging skincare", "fine lines serum", "firming serum"],
-    # Trend / commercial intent
     ["glass skin", "skin barrier", "barrier repair"],
     ["skin cycling", "skin flooding", "slugging skincare"],
     ["viral skincare", "trending skincare", "best skincare"],
     ["best serum", "best moisturizer", "best sunscreen"],
     ["skincare gift set", "trending skincare products", "viral serum"],
-    # Europe-oriented demand
     ["skincare germany", "skincare trends germany", "sunscreen germany"],
     ["skincare europe", "skincare trends europe", "anti aging europe"],
 ]
 
-
-# YouTube Data API v3 - 공식 API
-# 기본 무료 quota: 10,000 units/day. search.list = 100 units/call,
-# videos.list = 1 unit/call. 실사용 안정성을 위해 96 search calls +
-# 6 video-stat calls = 9,606 units/day까지 사용한다.
-# 48개 beauty query를 NL/DE 각각 검색해 서유럽 신호를 넓게 커버한다.
 YOUTUBE_SEARCH_CALLS_PER_DAY = 96
 YOUTUBE_VIDEO_STATS_CALLS_PER_DAY = 6
 YOUTUBE_SEARCH_RESULTS_PER_CALL = 50
@@ -152,9 +119,6 @@ YOUTUBE_QUERY_ROTATION = [
     "glass skin", "skin flooding", "skin cycling"
 ]
 
-# TikTok은 tiktok-scraper7 플랜 기준 300 calls/month(hard limit)이다.
-# 31일 기준으로도 한도를 넘지 않도록 하루 9회로 설정한다 (9 * 31 = 279 <= 300).
-# 하루 9개를 flat pool에서 sliding window로 순환 선택해 넓게 커버한다.
 TIKTOK_QUERY_ROTATION = [
     "skincare", "skincare routine", "beauty skincare",
     "skincare trends", "trending skincare routine", "skincare hacks",
@@ -179,7 +143,6 @@ TIKTOK_QUERY_ROTATION = [
     "skincare germany", "skincare trends germany", "beauty germany",
 ]
 
-# Instagram은 하루 1개이므로 2주 rotation으로 넓게 탐색한다.
 INSTAGRAM_ROTATION = [
     "skincare", "skincaretrends", "skincarehacks", "beauty",
     "skincareproducts", "skincareroutine", "skincarecommunity",
@@ -197,8 +160,6 @@ INSTAGRAM_ROTATION = [
     "viralbeauty", "viralskincare", "trendingskincare",
 ]
 
-# Google은 SNS와 독립적으로 탐색한다.
-# 너무 많은 API 요청을 만들지 않도록 날짜별 batch를 회전한다.
 GOOGLE_SEED_GROUPS = {
     "category": [
         "skincare", "skin care", "trending skincare", "viral skincare", "cosmetics",
@@ -224,7 +185,6 @@ GOOGLE_SEED_GROUPS = {
     ]
 }
 
-# 기존 vocabulary + Google에서 새로 발견된 후보를 담을 때 사용하는 기본 사전
 INGREDIENTS_VOCAB = [
     "pdrn", "retinol", "cica", "niacinamide", "spicule", "reedle",
     "reedle shot", "peptide", "exosome", "exosomes", "azelaic",
@@ -241,7 +201,32 @@ INGREDIENTS_VOCAB = [
     "glow", "slugging", "skin cycling", "skin flooding", "ectoin"
 ]
 
-# 검색어 의도 분류용 단어
+THEME_RULES = [
+    ("barrier_soothing", [
+        "ceramide", "centella", "cica", "panthenol", "ectoin",
+        "barrier", "sensitive skin", "redness", "rosacea", "soothing"
+    ]),
+    ("sun_protection", [
+        "sunscreen", "sun stick", "sunstick", "spf", "sun care"
+    ]),
+    ("acne_pore", [
+        "salicylic", "azelaic", "acne", "pore", "blemish", "bha", "aha"
+    ]),
+    ("brightening_pigment", [
+        "vitamin c", "niacinamide", "tranexamic", "kojic",
+        "dark spot", "hyperpigmentation", "brightening", "glow"
+    ]),
+    ("antiaging_regeneration", [
+        "retinol", "retinal", "bakuchiol", "peptide", "collagen",
+        "exosome", "pdrn", "polynucleotide", "antiaging", "anti-aging",
+        "firming", "reedle", "spicule", "volufiline"
+    ]),
+    ("hydration", [
+        "hyaluronic", "hydrat", "dry skin", "dehydrated",
+        "snail", "propolis", "squalane", "urea"
+    ]),
+]
+
 COMMERCIAL_WORDS = {
     "best", "review", "reviews", "price", "buy", "where to buy",
     "shop", "product", "products", "serum", "cream", "ampoule",
@@ -253,11 +238,14 @@ INFORMATIONAL_WORDS = {
     "meaning", "side effects", "before after"
 }
 
+DYNAMIC_POOL_RATIO = 0.30
+DYNAMIC_POOL_MAX_SIZE = 40
+DYNAMIC_CANDIDATE_MIN_TIMES_SEEN = 2
+DYNAMIC_CANDIDATE_LOOKBACK_DAYS = 14
 
 # ============================================================
 # 1. HTTP Session
 # ============================================================
-
 def get_robust_session() -> requests.Session:
     retries = Retry(
         total=2,
@@ -270,22 +258,17 @@ def get_robust_session() -> requests.Session:
     s.mount("https://", HTTPAdapter(max_retries=retries))
     return s
 
-
 session = get_robust_session()
 apify_session = requests.Session()
-
 
 # ============================================================
 # 2. 날짜 / rotation
 # ============================================================
-
 def get_market_now() -> datetime.datetime:
     return datetime.datetime.now(MARKET_TZ)
 
-
 def get_today_iso() -> str:
     return get_market_now().date().isoformat()
-
 
 def rotation_index(length: int) -> int:
     if length <= 0:
@@ -294,122 +277,78 @@ def rotation_index(length: int) -> int:
     today = get_market_now().date()
     return (today - epoch).days % length
 
+def keyword_theme(keyword: str) -> str:
+    kw = (keyword or "").lower()
+    for theme, terms in THEME_RULES:
+        if any(t in kw for t in terms):
+            return theme
+    return "other"
+
+def is_beauty_relevant(text: str) -> bool:
+    t = text.lower()
+    beauty_terms = [
+        "skin", "skincare", "beauty", "cosmetic", "serum", "cream",
+        "retinol", "retinal", "pdrn", "niacinamide", "peptide",
+        "exosome", "sunscreen", "spf", "acne", "barrier", "toner",
+        "ampoule", "essence", "cleanser", "mask", "moisturizer",
+        "moisturiser", "hyperpigmentation", "dark spot", "kbeauty",
+        "cica", "centella", "ceramide", "ectoin", "spicule",
+        "snail", "propolis", "bakuchiol", "azelaic", "salicylic"
+    ]
+    return any(term in t for term in beauty_terms)
 
 def get_today_tiktok_queries() -> List[str]:
-    """
-    하루 최대 TIKTOK_DAILY_LIMIT개의 검색어를 순환하며 수집한다.
-    고정 TIKTOK_QUERY_ROTATION(70%)에 이번 주 동적 후보 풀(30%)을 섞은
-    하이브리드 풀에서, 오늘 시작 위치부터 연속으로 뽑아 넓게 커버한다.
-    """
     hybrid_pool = interleave_hybrid_expand(
         TIKTOK_QUERY_ROTATION, get_weekly_dynamic_pool()
     )
     n = len(hybrid_pool)
     if n == 0:
         return []
-
     start = rotation_index(n)
     count = min(TIKTOK_DAILY_LIMIT, n)
-
-    return [
-        hybrid_pool[(start + i) % n]
-        for i in range(count)
-    ]
-
-
-
-def get_today_instagram_tag() -> str:
-    """Instagram Statistics API: 하루 1개 tag를 순환한다. (현재 미사용 - Apify 경로가 실제 사용됨)"""
-    if not INSTAGRAM_ROTATION:
-        return "skincare"
-    return INSTAGRAM_ROTATION[rotation_index(len(INSTAGRAM_ROTATION))]
-
+    return [hybrid_pool[(start + i) % n] for i in range(count)]
 
 def get_today_amazon_queries() -> List[str]:
     return AMAZON_QUERY_ROTATION[rotation_index(len(AMAZON_QUERY_ROTATION))]
 
-
 def get_today_google_group_names() -> List[str]:
-    # 하루 1개 group을 깊게 보고, 2개는 가볍게 seed 후보를 유지한다.
     names = list(GOOGLE_SEED_GROUPS.keys())
     idx = rotation_index(len(names))
-    return [
-        names[idx],
-        names[(idx + 1) % len(names)]
-    ]
-
+    return [names[idx], names[(idx + 1) % len(names)]]
 
 def get_today_google_seeds(limit: int = 12) -> List[str]:
-    """Autocomplete는 요청 폭주를 막기 위해 하루 총 12개 seed만 사용한다."""
     all_seeds = []
     for group in GOOGLE_SEED_GROUPS.values():
         all_seeds.extend(group)
-
-    # 중복 제거 후 날짜별 window rotation
     unique = list(dict.fromkeys(all_seeds))
     if not unique:
         return []
-
     start = rotation_index(len(unique))
-    return [
-        unique[(start + i) % len(unique)]
-        for i in range(min(limit, len(unique)))
-    ]
-
+    return [unique[(start + i) % len(unique)] for i in range(min(limit, len(unique)))]
 
 # ============================================================
-# 2b. 동적 하이브리드 태그 파이프라인 (고정 70% + 동적 30%)
+# 2b. 동적 하이브리드 태그 파이프라인
 # ============================================================
-#
-# 아이디어: 우리가 이미 매일 수집하는 Google 자동완성 candidate와
-# (TikTok/Instagram/YouTube가 다 같이 합류하는) trend_scores의
-# velocity 상승 키워드를 "그 주의 신규 후보 풀"로 뽑아서,
-# 기존 고정 rotation 리스트에 섞어 넣는다.
-#
-# - 캐시 단위: ISO 주(월요일 시작). 같은 주 안에서는 동일한 동적 풀을
-#   재사용한다 (매일 다시 뽑으면 sliding-window 커버리지가 흔들림).
-# - TikTok/Instagram: 하루 호출 수(TIKTOK_DAILY_LIMIT=9, Instagram=1개)가
-#   풀 크기와 무관하게 고정돼 있으므로, 풀 자체를 "확장"해서 섞는다
-#   (interleave_hybrid_expand). 예산에 영향 없음.
-# - YouTube: 매일 풀 전체를 다 검색하므로(96 calls/day 예산이 풀 크기에
-#   비례), 풀 크기를 그대로 유지한 채 30%만 동적 키워드로 "교체"한다
-#   (replace_hybrid_fixed_size). 예산 불변.
-
-DYNAMIC_POOL_RATIO = 0.30
-DYNAMIC_POOL_MAX_SIZE = 40
-DYNAMIC_CANDIDATE_MIN_TIMES_SEEN = 2      # google_candidates 최소 재등장 횟수
-DYNAMIC_CANDIDATE_LOOKBACK_DAYS = 14      # trend_scores 조회 기간
-
-
 def get_iso_week_id() -> str:
-    """ISO 연-주 문자열, 예: '2026-W33'. 월요일 기준으로 주가 바뀐다."""
     year, week, _ = get_market_now().date().isocalendar()
     return f"{year}-W{week:02d}"
 
-
 def build_dynamic_keyword_pool(limit: int = DYNAMIC_POOL_MAX_SIZE) -> List[str]:
-    """
-    Google 자동완성에서 반복적으로 잡힌 candidate + 최근 2주간
-    trend_scores에서 velocity가 상승세(EMERGING/RISING 임계치 이상)였던
-    키워드를 합쳐서 "이번 주 동적 후보 풀"의 원재료를 만든다.
-    """
     conn = get_db()
     today = get_market_now().date()
-    lookback_start = (
-        today - datetime.timedelta(days=DYNAMIC_CANDIDATE_LOOKBACK_DAYS)
-    ).isoformat()
+    lookback_start = (today - datetime.timedelta(days=DYNAMIC_CANDIDATE_LOOKBACK_DAYS)).isoformat()
 
-    candidate_rows = conn.execute("""
-        SELECT keyword, times_seen
-        FROM google_candidates
-        WHERE times_seen >= ?
-        ORDER BY times_seen DESC, last_seen DESC
+    # 교차 검증된 키워드 우선: 여러 날 + 여러 플랫폼에서 관찰된 키워드
+    flow_rows = conn.execute("""
+        SELECT keyword, COUNT(DISTINCT signal_date) AS days, COUNT(DISTINCT platform) AS plats
+        FROM keyword_daily
+        WHERE signal_date >= ? AND mentions > 0
+        GROUP BY keyword
+        HAVING days >= 3 AND plats >= 2
+        ORDER BY days DESC, plats DESC
         LIMIT ?
-    """, (DYNAMIC_CANDIDATE_MIN_TIMES_SEEN, limit * 2)).fetchall()
+    """, (lookback_start, limit * 2)).fetchall()
 
-    # calculate_trend_status와 동일한 임계치(EMERGING: velocity>=0.10)를
-    # 재사용해서, "최근 2주 안에 한 번이라도 상승세였던 키워드"를 뽑는다.
-    # (trend_scores에는 status 컬럼이 없어서 velocity_score로 근사한다.)
     trend_rows = conn.execute("""
         SELECT keyword, MAX(velocity_score) AS peak_velocity
         FROM trend_scores
@@ -420,19 +359,24 @@ def build_dynamic_keyword_pool(limit: int = DYNAMIC_POOL_MAX_SIZE) -> List[str]:
         LIMIT ?
     """, (lookback_start, limit * 2)).fetchall()
 
+    candidate_rows = conn.execute("""
+        SELECT keyword, times_seen
+        FROM google_candidates
+        WHERE times_seen >= ?
+        ORDER BY times_seen DESC, last_seen DESC
+        LIMIT ?
+    """, (DYNAMIC_CANDIDATE_MIN_TIMES_SEEN, limit * 2)).fetchall()
+
     conn.close()
 
     pool = []
     seen_lower = set()
-
-    for row in list(candidate_rows) + list(trend_rows):
+    for row in list(flow_rows) + list(trend_rows) + list(candidate_rows):
         kw = (row["keyword"] or "").strip()
-        if not kw:
+        if not kw or len(kw) < 3:
             continue
         kw_lower = kw.lower()
         if kw_lower in seen_lower:
-            continue
-        if len(kw) < 3:
             continue
         if not is_beauty_relevant(kw):
             continue
@@ -440,24 +384,15 @@ def build_dynamic_keyword_pool(limit: int = DYNAMIC_POOL_MAX_SIZE) -> List[str]:
         pool.append(kw)
         if len(pool) >= limit:
             break
-
     return pool
 
-
 def get_weekly_dynamic_pool(limit: int = DYNAMIC_POOL_MAX_SIZE) -> List[str]:
-    """
-    이번 주(ISO 주 기준)의 동적 후보 풀을 반환한다.
-    이미 이번 주에 계산해둔 게 있으면 그걸 재사용하고,
-    없으면 새로 계산해서 캐시한다.
-    """
     week_id = get_iso_week_id()
     conn = get_db()
-
     row = conn.execute(
         "SELECT keywords_json FROM weekly_dynamic_pool WHERE week_id = ?",
         (week_id,)
     ).fetchone()
-
     if row:
         conn.close()
         try:
@@ -466,7 +401,6 @@ def get_weekly_dynamic_pool(limit: int = DYNAMIC_POOL_MAX_SIZE) -> List[str]:
             return []
 
     pool = build_dynamic_keyword_pool(limit)
-
     conn.execute("""
         INSERT INTO weekly_dynamic_pool (week_id, keywords_json, created_at)
         VALUES (?, ?, ?)
@@ -474,37 +408,17 @@ def get_weekly_dynamic_pool(limit: int = DYNAMIC_POOL_MAX_SIZE) -> List[str]:
     """, (week_id, json.dumps(pool), get_market_now().isoformat()))
     conn.commit()
     conn.close()
-
-    logging.info(
-        "Weekly dynamic keyword pool built for %s: %d candidates -> %s",
-        week_id, len(pool), pool[:10]
-    )
-
+    logging.info("Weekly dynamic keyword pool built for %s: %d candidates -> %s", week_id, len(pool), pool[:10])
     return pool
 
-
-def interleave_hybrid_expand(
-    fixed: List[str],
-    dynamic: List[str],
-    ratio: float = DYNAMIC_POOL_RATIO
-) -> List[str]:
-    """
-    TikTok/Instagram처럼 '하루에 뽑는 개수'가 풀 크기와 무관하게 고정된
-    경우에 쓴다. 고정 풀은 그대로 두고, 동적 키워드를 골고루 끼워 넣어서
-    풀 자체를 키운다 -> 일일 호출 예산에는 영향 없음.
-    """
+def interleave_hybrid_expand(fixed: List[str], dynamic: List[str], ratio: float = DYNAMIC_POOL_RATIO) -> List[str]:
     fixed_lower = {f.lower() for f in fixed}
     dynamic_filtered = [d for d in dynamic if d.lower() not in fixed_lower]
-
     if not dynamic_filtered or not fixed:
         return list(fixed)
 
-    # fixed : dynamic 비율이 (1-ratio) : ratio 가 되도록 동적 후보 개수를 정한다.
-    target_dynamic_count = max(
-        1, round(len(fixed) * ratio / (1 - ratio))
-    )
+    target_dynamic_count = max(1, round(len(fixed) * ratio / (1 - ratio)))
     dynamic_selected = dynamic_filtered[:target_dynamic_count]
-
     spacing = max(1, round(len(fixed) / len(dynamic_selected)))
 
     result = []
@@ -514,56 +428,33 @@ def interleave_hybrid_expand(
         if di < len(dynamic_selected) and (idx + 1) % spacing == 0:
             result.append(dynamic_selected[di])
             di += 1
-
     result.extend(dynamic_selected[di:])
     return result
 
-
-def replace_hybrid_fixed_size(
-    fixed: List[str],
-    dynamic: List[str],
-    ratio: float = DYNAMIC_POOL_RATIO
-) -> List[str]:
-    """
-    YouTube처럼 '풀 전체를 매일 다 쓰는' 경우에 쓴다. 호출 예산이 풀
-    크기에 비례하므로, 풀 크기는 그대로 유지한 채 ratio만큼의 자리를
-    동적 키워드로 교체한다 (매주 동일하게 유지 -> 같은 주 안에서는
-    호출 예산이 완전히 고정된다).
-    """
+def replace_hybrid_fixed_size(fixed: List[str], dynamic: List[str], ratio: float = DYNAMIC_POOL_RATIO) -> List[str]:
     fixed_lower = {f.lower() for f in fixed}
     dynamic_filtered = [d for d in dynamic if d.lower() not in fixed_lower]
-
     if not dynamic_filtered or not fixed:
         return list(fixed)
 
-    replace_count = min(
-        len(dynamic_filtered),
-        max(1, round(len(fixed) * ratio))
-    )
-
+    replace_count = min(len(dynamic_filtered), max(1, round(len(fixed) * ratio)))
     result = list(fixed)
     spacing = max(1, len(result) // replace_count)
-
     for i in range(replace_count):
         idx = min((i + 1) * spacing - 1, len(result) - 1)
         result[idx] = dynamic_filtered[i]
-
     return result
-
 
 # ============================================================
 # 3. SQLite
 # ============================================================
-
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
-
 def init_database():
     conn = get_db()
-
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw_signals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -576,7 +467,6 @@ def init_database():
             text TEXT NOT NULL
         )
     """)
-
     conn.execute("""
         CREATE TABLE IF NOT EXISTS keyword_daily (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -588,8 +478,6 @@ def init_database():
             UNIQUE(signal_date, keyword, platform, region)
         )
     """)
-
-    # 기존 DB와 호환되는 기존 trend_scores
     conn.execute("""
         CREATE TABLE IF NOT EXISTS trend_scores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -605,8 +493,6 @@ def init_database():
             UNIQUE(signal_date, keyword)
         )
     """)
-
-    # 기존 RSS 저장용
     conn.execute("""
         CREATE TABLE IF NOT EXISTS google_trends (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -616,8 +502,6 @@ def init_database():
             term TEXT NOT NULL
         )
     """)
-
-    # 새로운 Google 신호
     conn.execute("""
         CREATE TABLE IF NOT EXISTS google_signals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -632,13 +516,9 @@ def init_database():
             rising_score REAL,
             comparison_group TEXT,
             source TEXT NOT NULL,
-            UNIQUE(
-                signal_date, region, seed_keyword, keyword,
-                query_type, source
-            )
+            UNIQUE(signal_date, region, seed_keyword, keyword, query_type, source)
         )
     """)
-
     conn.execute("""
         CREATE TABLE IF NOT EXISTS google_keyword_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -650,7 +530,6 @@ def init_database():
             UNIQUE(signal_date, region, keyword, source)
         )
     """)
-
     conn.execute("""
         CREATE TABLE IF NOT EXISTS google_candidates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -661,8 +540,6 @@ def init_database():
             times_seen INTEGER NOT NULL DEFAULT 1
         )
     """)
-
-    # GitHub Actions 사이에서도 월간 API quota를 누적하기 위한 ledger
     conn.execute("""
         CREATE TABLE IF NOT EXISTS api_usage (
             usage_month TEXT NOT NULL,
@@ -673,10 +550,6 @@ def init_database():
             PRIMARY KEY (usage_month, provider, endpoint)
         )
     """)
-
-    # 하이브리드 동적 태그 파이프라인: 그 주에 뽑힌 "동적 30%" 후보를
-    # 주 단위로 고정 캐시해서, 같은 주 안에서는 매일 같은 풀을 쓰도록 한다
-    # (매일 다시 뽑으면 sliding window 커버리지가 흔들린다).
     conn.execute("""
         CREATE TABLE IF NOT EXISTS weekly_dynamic_pool (
             week_id TEXT PRIMARY KEY,
@@ -685,30 +558,31 @@ def init_database():
         )
     """)
 
-    # 기존 DB 호환: 신규 점수 컬럼이 없으면 추가
-    try:
-        conn.execute(
-            "ALTER TABLE trend_scores ADD COLUMN platform_normalized_score REAL NOT NULL DEFAULT 0"
-        )
-    except sqlite3.OperationalError:
-        pass
+    for col, typ in [
+        ("platform_normalized_score", "REAL NOT NULL DEFAULT 0"),
+        ("flow_score", "REAL NOT NULL DEFAULT 0"),
+        ("z_score", "REAL NOT NULL DEFAULT 0"),
+        ("active_days_14", "INTEGER NOT NULL DEFAULT 0"),
+        ("validation_score", "REAL NOT NULL DEFAULT 0"),
+        ("lifecycle", "TEXT NOT NULL DEFAULT ''"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE trend_scores ADD COLUMN {col} {typ}")
+        except sqlite3.OperationalError:
+            pass
 
     conn.commit()
     conn.close()
     logging.info("SQLite database initialized: %s", DB_PATH)
 
-
 # ============================================================
 # 4. Telegram Error
 # ============================================================
-
 def send_telegram_error(error_msg: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         logging.error("Telegram credentials missing.")
         return
-
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
     try:
         session.post(
             url,
@@ -721,140 +595,83 @@ def send_telegram_error(error_msg: str):
     except Exception as e:
         logging.error("Telegram error notification failed: %s", e)
 
-
 # ============================================================
-# 5. Google - Daily RSS (보조 신호)
+# 5. Google Daily RSS
 # ============================================================
-
 def fetch_google_daily_rss(geo: str, count: int = 15) -> List[str]:
-    # 2024년 이후 구형 daily RSS(/trends/trendingsearches/daily/rss)는
-    # 폐지되어 항상 404를 반환한다. 현재는 /trending/rss 경로를 사용해야 한다.
     url = f"https://trends.google.com/trending/rss?geo={geo}"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; BeautyTrendBot/1.0)"
-    }
-
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; BeautyTrendBot/1.0)"}
     try:
         res = session.get(url, headers=headers, timeout=15)
         if res.status_code != 200:
-            logging.warning(
-                "[%s] Google daily RSS HTTP %s",
-                geo, res.status_code
-            )
+            logging.warning("[%s] Google daily RSS HTTP %s", geo, res.status_code)
             return []
-
         root = ET.fromstring(res.content)
-        titles = [
-            item.text.strip()
-            for item in root.findall(".//item/title")
-            if item.text
-        ]
+        titles = [item.text.strip() for item in root.findall(".//item/title") if item.text]
         return titles[:count]
-
     except Exception as e:
         logging.error("[%s] Google daily RSS failed: %s", geo, e)
         return []
 
-
 def save_google_daily_rss(signal_date: str, region: str, terms: List[str]):
     if not terms:
         return
-
     conn = get_db()
     for rank, term in enumerate(terms, start=1):
         conn.execute("""
-            INSERT INTO google_trends
-            (signal_date, region, rank, term)
+            INSERT INTO google_trends (signal_date, region, rank, term)
             VALUES (?, ?, ?, ?)
         """, (signal_date, region, rank, term))
     conn.commit()
     conn.close()
 
-
 # ============================================================
-# 6. Google - Autocomplete
+# 6. Google Autocomplete
 # ============================================================
-
 def fetch_google_autocomplete(seed: str, geo: str) -> List[str]:
-    """
-    Google autocomplete는 Trends 지수가 아니다.
-    따라서 '검색량'으로 사용하지 않고 '검색어 후보 발견' 용도로만 사용한다.
-    """
     url = "https://suggestqueries.google.com/complete/search"
-
     params = {
         "client": "firefox",
         "q": seed,
         "hl": "en",
         "gl": geo.lower()
     }
-
     try:
         res = session.get(url, params=params, timeout=10)
         if res.status_code != 200:
             return []
-
         data = res.json()
         if not isinstance(data, list) or len(data) < 2:
             return []
-
         suggestions = data[1]
         if not isinstance(suggestions, list):
             return []
-
         output = []
         for item in suggestions:
             if isinstance(item, str):
                 item = item.strip()
                 if item and item.lower() != seed.lower():
                     output.append(item)
-
         return output[:10]
-
     except Exception as e:
         logging.debug("Autocomplete failed for %s/%s: %s", seed, geo, e)
         return []
 
-
 # ============================================================
 # 7. Google signal classification
 # ============================================================
-
 def classify_intent(keyword: str) -> str:
     text = keyword.lower()
-
     commercial = sum(
         1 for word in COMMERCIAL_WORDS
         if re.search(r"(?<!\w)" + re.escape(word) + r"(?!\w)", text)
     )
-
-    informational = sum(
-        1 for word in INFORMATIONAL_WORDS
-        if word in text
-    )
-
+    informational = sum(1 for word in INFORMATIONAL_WORDS if word in text)
     if commercial > informational and commercial > 0:
         return "commercial"
     if informational > commercial and informational > 0:
         return "informational"
     return "product_or_category"
-
-
-def is_beauty_relevant(text: str) -> bool:
-    t = text.lower()
-
-    beauty_terms = [
-        "skin", "skincare", "beauty", "cosmetic", "serum", "cream",
-        "retinol", "retinal", "pdrn", "niacinamide", "peptide",
-        "exosome", "sunscreen", "spf", "acne", "barrier", "toner",
-        "ampoule", "essence", "cleanser", "mask", "moisturizer",
-        "moisturiser", "hyperpigmentation", "dark spot", "kbeauty",
-        "cica", "centella", "ceramide", "ectoin", "spicule",
-        "snail", "propolis", "bakuchiol", "azelaic", "salicylic"
-    ]
-
-    return any(term in t for term in beauty_terms)
-
 
 def save_google_signal(
     signal_date: str,
@@ -869,19 +686,14 @@ def save_google_signal(
     conn = get_db()
     now = get_market_now().isoformat()
     intent = classify_intent(keyword)
-
     conn.execute("""
-        INSERT INTO google_signals
-        (
+        INSERT INTO google_signals (
             signal_date, collected_at, region, seed_keyword,
             keyword, query_type, intent, interest_score,
             rising_score, comparison_group, source
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(
-            signal_date, region, seed_keyword, keyword,
-            query_type, source
-        )
+        ON CONFLICT(signal_date, region, seed_keyword, keyword, query_type, source)
         DO UPDATE SET
             interest_score = excluded.interest_score,
             rising_score = excluded.rising_score
@@ -890,63 +702,34 @@ def save_google_signal(
         query_type, intent, interest_score, rising_score,
         seed, source
     ))
-
     conn.execute("""
-        INSERT INTO google_candidates
-        (first_seen, last_seen, keyword, source, times_seen)
+        INSERT INTO google_candidates (first_seen, last_seen, keyword, source, times_seen)
         VALUES (?, ?, ?, ?, 1)
-        ON CONFLICT(keyword)
-        DO UPDATE SET
+        ON CONFLICT(keyword) DO UPDATE SET
             last_seen = excluded.last_seen,
             times_seen = google_candidates.times_seen + 1
-    """, (
-        signal_date, signal_date, keyword, source
-    ))
+    """, (signal_date, signal_date, keyword, source))
 
     if interest_score is not None:
         conn.execute("""
-            INSERT INTO google_keyword_history
-            (signal_date, region, keyword, interest_score, source)
+            INSERT INTO google_keyword_history (signal_date, region, keyword, interest_score, source)
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(signal_date, region, keyword, source)
-            DO UPDATE SET
-                interest_score = excluded.interest_score
-        """, (
-            signal_date, region, keyword,
-            interest_score, source
-        ))
+            DO UPDATE SET interest_score = excluded.interest_score
+        """, (signal_date, region, keyword, interest_score, source))
 
     conn.commit()
     conn.close()
 
-
-def collect_google_independent_signals(
-    signal_date: str,
-    regions: List[str]
-) -> Dict[str, List[Dict]]:
-    """
-    Google는 SNS와 독립적인 discovery source다.
-
-    무료/무인 GitHub Actions 환경에서는:
-    - RSS: NL/DE 각각 1회
-    - Autocomplete: 하루 총 12회 이하
-    - 요청은 직렬 처리
-    - 429/403 발생 시 즉시 해당 실행의 Autocomplete를 중단
-    - Autocomplete 결과는 검색량/트렌드 점수로 취급하지 않음
-    """
+def collect_google_independent_signals(signal_date: str, regions: List[str]) -> Dict[str, List[Dict]]:
     output = {region: [] for region in regions}
     seeds = get_today_google_seeds(limit=12)
-
-    # 12개 요청을 지역별로 균등 분배
     jobs = []
     for i, seed in enumerate(seeds):
         region = regions[i % len(regions)]
         jobs.append((seed, region))
 
-    logging.info(
-        "Google independent discovery: autocomplete_jobs=%d (hard cap=12)",
-        len(jobs)
-    )
+    logging.info("Google independent discovery: autocomplete_jobs=%d (hard cap=12)", len(jobs))
 
     for seed, region in jobs:
         if is_beauty_relevant(seed):
@@ -958,13 +741,10 @@ def collect_google_independent_signals(
                 query_type="seed",
                 source="google_seed"
             )
-
         suggestions = fetch_google_autocomplete(seed, region)
-
         for suggestion in suggestions:
             if not is_beauty_relevant(suggestion):
                 continue
-
             save_google_signal(
                 signal_date=signal_date,
                 region=region,
@@ -973,7 +753,6 @@ def collect_google_independent_signals(
                 query_type="related_candidate",
                 source="google_autocomplete"
             )
-
             output[region].append({
                 "keyword": suggestion,
                 "seed": seed,
@@ -982,17 +761,12 @@ def collect_google_independent_signals(
                 "interest_score": None,
                 "rising_score": None
             })
-
-        # Google suggestion endpoint도 너무 빠르게 연속 호출하지 않는다.
         time.sleep(1.2)
-
     return output
 
-
 # ============================================================
-# 9. TikTok (tiktok-scraper7 / tikwm) - 하루 9 calls
+# 9. TikTok
 # ============================================================
-
 def fetch_tiktok_captions() -> List[Dict]:
     if not RAPIDAPI_KEY:
         logging.warning("RAPIDAPI_KEY missing. TikTok skipped.")
@@ -1003,14 +777,11 @@ def fetch_tiktok_captions() -> List[Dict]:
         "x-rapidapi-key": RAPIDAPI_KEY,
         "x-rapidapi-host": "tiktok-scraper7.p.rapidapi.com"
     }
-
     queries = get_today_tiktok_queries()[:TIKTOK_DAILY_LIMIT]
     results = []
 
     for query_index, query in enumerate(queries):
         try:
-            # 요청 횟수는 그대로 두고 count만 최대치로 올려
-            # 동일 쿼터 안에서 표본을 최대한 확보한다.
             res = session.get(
                 url,
                 headers=headers,
@@ -1024,72 +795,38 @@ def fetch_tiktok_captions() -> List[Dict]:
                 },
                 timeout=15
             )
-
             if res.status_code != 200:
-                logging.warning(
-                    "TikTok query '%s' HTTP %s: %s",
-                    query, res.status_code, res.text[:300]
-                )
+                logging.warning("TikTok query '%s' HTTP %s: %s", query, res.status_code, res.text[:300])
                 continue
 
             data = res.json()
-
-            # tiktok-scraper7(tikwm) 정상 응답: {"code":0,"msg":"success","data":{"videos":[...]}}
-            # code != 0 이면 API 자체 에러(예: 쿼터 초과, 잘못된 파라미터)이므로 스킵한다.
             if isinstance(data.get("code"), int) and data["code"] != 0:
-                logging.warning(
-                    "TikTok query '%s' API error code=%s msg=%s",
-                    query, data.get("code"), data.get("msg")
-                )
+                logging.warning("TikTok query '%s' API error code=%s msg=%s", query, data.get("code"), data.get("msg"))
                 continue
 
             if isinstance(data.get("data"), list):
                 items = data["data"]
             elif isinstance(data.get("data"), dict):
-                items = (
-                    data["data"].get("videos")
-                    or data["data"].get("item_list")
-                    or []
-                )
+                items = data["data"].get("videos") or data["data"].get("item_list") or []
             else:
-                # data 래핑 없이 최상위에 videos/item_list를 바로 반환하는
-                # 경우에 대한 방어적 처리.
-                items = (
-                    data.get("videos")
-                    or data.get("item_list")
-                    or []
-                )
+                items = data.get("videos") or data.get("item_list") or []
 
             if not items:
-                logging.info(
-                    "TikTok query '%s' returned 0 items despite HTTP 200. "
-                    "Raw response (first 300 chars): %s",
-                    query, str(data)[:300]
-                )
+                logging.info("TikTok query '%s' returned 0 items. Raw: %s", query, str(data)[:300])
 
             for item in items[:TIKTOK_QUERY_COUNT]:
-                # tikwm 계열은 캡션을 "title" 필드에 담는다.
-                # 혹시 다른 변형 스키마가 오더라도 대응하도록 desc도 함께 체크한다.
-                desc = (
-                    item.get("title")
-                    or item.get("desc")
-                    or ""
-                )
-
+                desc = item.get("title") or item.get("desc") or ""
                 if not desc:
                     continue
-
                 desc = str(desc).strip()
                 if len(desc) <= 10:
                     continue
-
                 region = "EU"
                 q = query.lower()
                 if "germany" in q:
                     region = "DE"
                 elif "europe" in q:
                     region = "EU"
-
                 results.append({
                     "platform": "tiktok",
                     "query": query,
@@ -1097,28 +834,18 @@ def fetch_tiktok_captions() -> List[Dict]:
                     "region": region,
                     "text": desc.replace("\n", " ")[:180]
                 })
-
         except Exception as e:
-            logging.error(
-                "TikTok query '%s' failed: %s",
-                query, e
-            )
-
+            logging.error("TikTok query '%s' failed: %s", query, e)
         finally:
             if query_index < len(queries) - 1:
                 time.sleep(0.5)
 
-    logging.info(
-        "TikTok calls=%d/%d, count_per_call=%d, valid samples=%d",
-        len(queries), TIKTOK_DAILY_LIMIT, TIKTOK_QUERY_COUNT, len(results)
-    )
+    logging.info("TikTok calls=%d/%d, count_per_call=%d, valid samples=%d", len(queries), TIKTOK_DAILY_LIMIT, TIKTOK_QUERY_COUNT, len(results))
     return results
 
-
 # ============================================================
-# 9b. Amazon - Real-Time Amazon Data (하루 3 calls)
+# 9b. Amazon
 # ============================================================
-
 def fetch_amazon_products() -> List[Dict]:
     if not RAPIDAPI_KEY:
         logging.warning("RAPIDAPI_KEY missing. Amazon skipped.")
@@ -1129,7 +856,6 @@ def fetch_amazon_products() -> List[Dict]:
         "x-rapidapi-key": RAPIDAPI_KEY,
         "x-rapidapi-host": "real-time-amazon-data.p.rapidapi.com"
     }
-
     queries = get_today_amazon_queries()[:AMAZON_DAILY_LIMIT]
     results = []
 
@@ -1141,41 +867,28 @@ def fetch_amazon_products() -> List[Dict]:
                 params={
                     "query": query,
                     "page": "1",
-                    "country": "DE",  # 유럽 마켓 대표로 독일 아마존 사용 (NL 마켓플레이스 없음)
+                    "country": "DE",
                     "sort_by": "RELEVANCE"
                 },
                 timeout=15
             )
-
             if res.status_code != 200:
-                logging.warning(
-                    "Amazon query '%s' HTTP %s: %s",
-                    query, res.status_code, res.text[:300]
-                )
+                logging.warning("Amazon query '%s' HTTP %s: %s", query, res.status_code, res.text[:300])
                 continue
 
             data = res.json()
-            products = (
-                data.get("data", {}).get("products", [])
-                if isinstance(data.get("data"), dict)
-                else []
-            )
+            products = data.get("data", {}).get("products", []) if isinstance(data.get("data"), dict) else []
 
             for item in products[:AMAZON_QUERY_COUNT]:
                 if not isinstance(item, dict):
                     continue
-
                 title = str(item.get("product_title") or "").strip()
                 if not title or len(title) <= 10:
                     continue
-
                 is_best_seller = bool(item.get("is_best_seller"))
-                rating_count = item.get("product_num_ratings")
-
                 text = title
                 if is_best_seller:
                     text = "[BESTSELLER] " + text
-
                 results.append({
                     "platform": "amazon",
                     "query": query,
@@ -1183,37 +896,20 @@ def fetch_amazon_products() -> List[Dict]:
                     "region": "DE",
                     "text": text.replace("\n", " ")[:180]
                 })
-
-            logging.info(
-                "Amazon query '%s' -> %d products (rating samples e.g. %s)",
-                query, len(products[:AMAZON_QUERY_COUNT]), rating_count
-                if products else None
-            )
-
         except Exception as e:
-            logging.error(
-                "Amazon query '%s' failed: %s",
-                query, e
-            )
+            logging.error("Amazon query '%s' failed: %s", query, e)
 
         if query_index < len(queries) - 1:
             time.sleep(0.5)
 
-    logging.info(
-        "Amazon calls=%d/%d, count_per_call<=%d, valid samples=%d",
-        len(queries), AMAZON_DAILY_LIMIT, AMAZON_QUERY_COUNT, len(results)
-    )
+    logging.info("Amazon calls=%d/%d, valid samples=%d", len(queries), AMAZON_DAILY_LIMIT, len(results))
     return results
 
-
-
 # ============================================================
-# 9b. Monthly API quota ledger
+# 9c. Monthly API quota ledger
 # ============================================================
-
 def get_usage_month() -> str:
     return get_market_now().strftime("%Y-%m")
-
 
 def get_api_calls(provider: str, endpoint: str, month: Optional[str] = None) -> int:
     month = month or get_usage_month()
@@ -1224,41 +920,6 @@ def get_api_calls(provider: str, endpoint: str, month: Optional[str] = None) -> 
     """, (month, provider, endpoint)).fetchone()
     conn.close()
     return int(row["calls"]) if row else 0
-
-
-def reserve_provider_call(provider: str, endpoint: str, monthly_limit: int) -> bool:
-    """Provider 전체 endpoint 합산 월간 quota를 원자적으로 예약한다."""
-    month = get_usage_month()
-    now = get_market_now().isoformat()
-    conn = get_db()
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("""
-            SELECT COALESCE(SUM(calls), 0) AS total
-            FROM api_usage
-            WHERE usage_month = ? AND provider = ?
-        """, (month, provider)).fetchone()
-        current = int(row["total"] or 0)
-        if current >= monthly_limit:
-            conn.rollback()
-            logging.warning("%s monthly quota exhausted: %d/%d", provider, current, monthly_limit)
-            return False
-        conn.execute("""
-            INSERT INTO api_usage(usage_month, provider, endpoint, calls, last_called_at)
-            VALUES (?, ?, ?, 1, ?)
-            ON CONFLICT(usage_month, provider, endpoint) DO UPDATE SET
-                calls = calls + 1,
-                last_called_at = excluded.last_called_at
-        """, (month, provider, endpoint, now))
-        conn.commit()
-        logging.info("Quota reserved %s total=%d/%d endpoint=%s", provider, current + 1, monthly_limit, endpoint)
-        return True
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
 
 def get_monthly_quota_snapshot() -> str:
     month = get_usage_month()
@@ -1274,36 +935,18 @@ def get_monthly_quota_snapshot() -> str:
         return "No API calls recorded this month."
     return " | ".join(f"{r['provider']}/{r['endpoint']}={r['calls']}" for r in rows)
 
-
 # ============================================================
-# 9c. YouTube Data API v3 - 공식 API
+# 9d. YouTube Data API v3
 # ============================================================
-
 def _youtube_query_window() -> List[str]:
-    """
-    하루 쿼리 전체를 NL/DE에 각각 적용한다.
-    풀 크기가 곧 API 호출 예산과 직결되므로(94~96 calls/day 전제),
-    풀 크기는 고정한 채 ratio만큼만 동적 키워드로 교체한다.
-    """
-    hybrid_pool = replace_hybrid_fixed_size(
-        YOUTUBE_QUERY_ROTATION, get_weekly_dynamic_pool()
-    )
+    hybrid_pool = replace_hybrid_fixed_size(YOUTUBE_QUERY_ROTATION, get_weekly_dynamic_pool())
     if not hybrid_pool:
         return []
     n = len(hybrid_pool)
     start = rotation_index(n)
     return [hybrid_pool[(start + i) % n] for i in range(n)]
 
-
 def fetch_youtube_trends() -> List[Dict]:
-    """
-    공식 YouTube Data API v3만 사용한다.
-
-    96 search.list 호출(48 queries x NL/DE) + 6 videos.list 호출로
-    기본 10,000 units/day 중 9,406 units를 사용한다.
-    search 결과는 최근 7일 영상만 수집하고, videos.list로 일부 영상의
-    조회수/좋아요/댓글수를 보강한다.
-    """
     if not YOUTUBE_API_KEY:
         logging.warning("YOUTUBE_API_KEY missing. YouTube skipped.")
         return []
@@ -1311,6 +954,7 @@ def fetch_youtube_trends() -> List[Dict]:
     search_url = "https://www.googleapis.com/youtube/v3/search"
     videos_url = "https://www.googleapis.com/youtube/v3/videos"
     headers = {"Accept": "application/json"}
+
     queries = _youtube_query_window()
     regions = ["NL", "DE"]
     published_after = (
@@ -1346,12 +990,8 @@ def fetch_youtube_trends() -> List[Dict]:
                     timeout=15
                 )
                 search_calls += 1
-
                 if res.status_code != 200:
-                    logging.warning(
-                        "YouTube search '%s' [%s] HTTP %s: %s",
-                        query, region, res.status_code, res.text[:300]
-                    )
+                    logging.warning("YouTube search '%s' [%s] HTTP %s: %s", query, region, res.status_code, res.text[:300])
                     if res.status_code == 403 and "quotaExceeded" in res.text:
                         quota_exhausted = True
                     continue
@@ -1377,18 +1017,13 @@ def fetch_youtube_trends() -> List[Dict]:
                         "video_id": video_id,
                         "published_at": snippet.get("publishedAt")
                     })
-
             except Exception as e:
-                logging.error(
-                    "YouTube search '%s' [%s] failed: %s", query, region, e
-                )
-
+                logging.error("YouTube search '%s' [%s] failed: %s", query, region, e)
             time.sleep(0.15)
 
         if search_calls >= YOUTUBE_SEARCH_CALLS_PER_DAY or quota_exhausted:
             break
 
-    # search 결과에서 중복 제거된 영상 중 최대 300개에 대해 통계를 보강한다.
     stats_ids = video_ids[:YOUTUBE_VIDEO_STATS_CALLS_PER_DAY * YOUTUBE_VIDEO_STATS_BATCH_SIZE]
     stats_by_id = {}
 
@@ -1410,9 +1045,7 @@ def fetch_youtube_trends() -> List[Dict]:
             )
             stats_calls += 1
             if res.status_code != 200:
-                logging.warning(
-                    "YouTube videos.list HTTP %s: %s", res.status_code, res.text[:300]
-                )
+                logging.warning("YouTube videos.list HTTP %s: %s", res.status_code, res.text[:300])
                 if res.status_code == 403 and "quotaExceeded" in res.text:
                     quota_exhausted = True
                 continue
@@ -1432,31 +1065,26 @@ def fetch_youtube_trends() -> List[Dict]:
     for item in results:
         stats = stats_by_id.get(item.get("video_id"), {})
         item["text"] = (
-            item["text"]
-            + f" [views={stats.get('views','NA')}, likes={stats.get('likes','NA')}, comments={stats.get('comments','NA')}]"
+            item["text"] +
+            f" [views={stats.get('views','NA')}, likes={stats.get('likes','NA')}, comments={stats.get('comments','NA')}]"
         )[:320]
 
     logging.info(
         "YouTube calls search=%d/%d, videos=%d/%d, unique valid samples=%d, quota_used_est=%d/10000",
-        search_calls,
-        YOUTUBE_SEARCH_CALLS_PER_DAY,
-        stats_calls,
-        YOUTUBE_VIDEO_STATS_CALLS_PER_DAY,
+        search_calls, YOUTUBE_SEARCH_CALLS_PER_DAY,
+        stats_calls, YOUTUBE_VIDEO_STATS_CALLS_PER_DAY,
         len(results),
         search_calls * 100 + stats_calls
     )
     return results
 
-
 # ============================================================
-# 10. Instagram - Apify official maintained Actor
+# 10. Instagram Apify
 # ============================================================
-
 APIFY_ACTOR_RUN_URL = (
     "https://api.apify.com/v2/acts/"
     "apify~instagram-scraper/run-sync-get-dataset-items"
 )
-
 
 def get_apify_monthly_results() -> int:
     month = get_usage_month()
@@ -1469,12 +1097,10 @@ def get_apify_monthly_results() -> int:
     conn.close()
     return int(row["total"] or 0)
 
-
 def get_apify_daily_results() -> int:
     month = get_usage_month()
     day_endpoint = f"results:{get_today_iso()}"
     return get_api_calls("apify_instagram", day_endpoint, month)
-
 
 def add_apify_result_usage(count: int) -> None:
     if count <= 0:
@@ -1499,21 +1125,12 @@ def add_apify_result_usage(count: int) -> None:
     finally:
         conn.close()
 
-
 def get_today_apify_instagram_tags() -> List[str]:
-    # 하루 5개씩 순환하여 broad discovery와 ingredient/product discovery를 교차한다.
-    # (기존 2개 -> 4개 -> 5개: 니치 해시태그일수록 3일 이내 후보 게시물 자체가 적어
-    # resultsLimit을 다 못 채우는 문제가 있었음. 태그 다양성을 늘려 후보 풀을 넓힌다.)
-    # 고정 INSTAGRAM_ROTATION(70%) + 이번 주 동적 후보 풀(30%)을 섞은 하이브리드
-    # 풀에서 뽑는다. 하루 5개라는 예산은 풀 크기와 무관하므로 그대로 확장한다.
-    pool = interleave_hybrid_expand(
-        INSTAGRAM_ROTATION, get_weekly_dynamic_pool()
-    )
+    pool = interleave_hybrid_expand(INSTAGRAM_ROTATION, get_weekly_dynamic_pool())
     if not pool:
         return []
     idx = rotation_index(len(pool))
     return [pool[(idx + i) % len(pool)] for i in range(5)]
-
 
 def fetch_instagram_apify() -> List[Dict]:
     if not APIFY_INSTAGRAM_ENABLED:
@@ -1526,10 +1143,8 @@ def fetch_instagram_apify() -> List[Dict]:
     used = get_apify_monthly_results()
     used_today = get_apify_daily_results()
     daily_remaining = APIFY_INSTAGRAM_DAILY_RESULT_LIMIT - used_today
-    remaining = min(
-        APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT - used,
-        daily_remaining
-    )
+    remaining = min(APIFY_INSTAGRAM_MONTHLY_RESULT_LIMIT - used, daily_remaining)
+
     if remaining <= 0:
         logging.warning(
             "Apify Instagram result cap reached: month=%d/%d today=%d/%d. Instagram collection stopped.",
@@ -1539,15 +1154,8 @@ def fetch_instagram_apify() -> List[Dict]:
         return []
 
     tags = get_today_apify_instagram_tags()
-    # 2026-08-13 실행 로그에서 실측으로 확인됨: resultsLimit=58(합산 상한이라고
-    # 가정했던 값)로 요청했는데 실제로는 84건이 돌아왔다(태그 5개, 평균
-    # 태그당 ~17건). 즉 이 Actor의 resultsLimit은 directUrls 전체에 대한
-    # 합산 상한이 아니라 URL(태그)별 상한이다 - "1회 호출 = 합산 총량"이라는
-    # 이전 가정은 틀렸다. 이 상태로 두면 하루/월 예산을 실제로 초과할 수 있어
-    # (이번에도 하루 캡 58을 84로 넘김) 태그 개수로 다시 나눠서, 태그별 상한 x
-    # 태그 개수의 합이 remaining을 절대 넘지 않도록 한다. 이렇게 하면 실제
-    # 의미가 "합산"이든 "태그별"이든 상관없이 항상 안전하다.
     results_limit = max(1, remaining // max(1, len(tags)))
+
     if remaining < 1:
         logging.warning("Apify Instagram remaining result budget too small: %d", remaining)
         return []
@@ -1579,16 +1187,8 @@ def fetch_instagram_apify() -> List[Dict]:
             params={"token": APIFY_TOKEN},
             timeout=120
         )
-        # Apify의 run-sync-get-dataset-items 엔드포인트는 정상 처리 시에도
-        # 200이 아니라 201을 반환하는 경우가 있다(실제 로그에서 201 + 정상
-        # dataset JSON이 함께 온 사례 확인). 200만 성공으로 인정하면 정상
-        # 수집분까지 버려지고, 이미 청구된 Apify 비용만 낭비된다. 2xx 전체를
-        # 성공으로 간주하고, 실패는 4xx/5xx만으로 판단한다.
         if not (200 <= res.status_code < 300):
-            logging.warning(
-                "Apify Instagram HTTP %s: %s",
-                res.status_code, res.text[:500]
-            )
+            logging.warning("Apify Instagram HTTP %s: %s", res.status_code, res.text[:500])
             return []
 
         data = res.json()
@@ -1598,6 +1198,7 @@ def fetch_instagram_apify() -> List[Dict]:
 
         results = []
         seen_ids = set()
+
         for item in data:
             if not isinstance(item, dict):
                 continue
@@ -1610,11 +1211,10 @@ def fetch_instagram_apify() -> List[Dict]:
             caption = str(item.get("caption") or "").strip()
             hashtags = item.get("hashtags") or []
             if isinstance(hashtags, list):
-                hashtag_text = " ".join(
-                    "#" + str(x).lstrip("#") for x in hashtags if str(x).strip()
-                )
+                hashtag_text = " ".join("#" + str(x).lstrip("#") for x in hashtags if str(x).strip())
             else:
                 hashtag_text = str(hashtags)
+
             text = (caption + (" " + hashtag_text if hashtag_text else "")).strip()
             if len(text) <= 10:
                 continue
@@ -1623,12 +1223,19 @@ def fetch_instagram_apify() -> List[Dict]:
             likes = item.get("likesCount")
             comments = item.get("commentsCount")
             views = item.get("videoViewCount")
+
             metrics = []
-            if likes is not None: metrics.append(f"likes={likes}")
-            if comments is not None: metrics.append(f"comments={comments}")
-            if views is not None: metrics.append(f"views={views}")
-            if owner: text = f"@{owner}: " + text
-            if metrics: text += " [" + ", ".join(metrics) + "]"
+            if likes is not None:
+                metrics.append(f"likes={likes}")
+            if comments is not None:
+                metrics.append(f"comments={comments}")
+            if views is not None:
+                metrics.append(f"views={views}")
+
+            if owner:
+                text = f"@{owner}: " + text
+            if metrics:
+                text += " [" + ", ".join(metrics) + "]"
 
             source_tag = ""
             parent = item.get("dataSource") or item.get("parentData")
@@ -1649,7 +1256,6 @@ def fetch_instagram_apify() -> List[Dict]:
                 "instagram_id": shortcode
             })
 
-        # 실제 반환 결과만 quota ledger에 기록한다.
         add_apify_result_usage(len(data))
         logging.info(
             "Apify Instagram results=%d valid=%d; quota month=%d/%d today=%d/%d",
@@ -1658,6 +1264,7 @@ def fetch_instagram_apify() -> List[Dict]:
             APIFY_INSTAGRAM_DAILY_RESULT_LIMIT
         )
         return results
+
     except requests.exceptions.Timeout:
         logging.warning("Apify Instagram timed out; Instagram skipped for today.")
         return []
@@ -1665,26 +1272,18 @@ def fetch_instagram_apify() -> List[Dict]:
         logging.error("Apify Instagram failed: %s", e)
         return []
 
-
 # ============================================================
 # 11. Raw signal 저장
 # ============================================================
-
 def save_raw_signals(signals: List[Dict]):
     if not signals:
         return
-
     conn = get_db()
     now = get_market_now().isoformat()
     signal_date = get_today_iso()
-
     for signal in signals:
         conn.execute("""
-            INSERT INTO raw_signals
-            (
-                collected_at, signal_date, platform,
-                query, tag, region, text
-            )
+            INSERT INTO raw_signals (collected_at, signal_date, platform, query, tag, region, text)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             now, signal_date,
@@ -1694,102 +1293,53 @@ def save_raw_signals(signals: List[Dict]):
             signal.get("region", ""),
             signal.get("text", "")
         ))
-
     conn.commit()
     conn.close()
-
 
 # ============================================================
 # 12. Keyword extraction
 # ============================================================
-
 def normalize_keyword(keyword: str) -> str:
     return keyword.lower().strip()
 
-
 def count_keywords_in_text(text: str) -> Counter:
-    """
-    한 게시물/상품명 안에서 같은 키워드가 여러 번 반복되어도 1회만 센다.
-    이렇게 해야 Amazon 상품명이나 해시태그 반복이 volume을 부풀리지 않는다.
-    """
     text = text.lower()
     counts = Counter()
-
     for keyword in INGREDIENTS_VOCAB:
-        pattern = (
-            r"(?<!\w)" +
-            re.escape(keyword.lower()) +
-            r"(?!\w)"
-        )
+        pattern = r"(?<!\w)" + re.escape(keyword.lower()) + r"(?!\w)"
         if re.search(pattern, text):
             counts[normalize_keyword(keyword)] = 1
-
     return counts
 
-
-def build_daily_keyword_counts(
-    signals: List[Dict]
-) -> Dict[Tuple[str, str, str], int]:
-    """
-    keyword mentions = 해당 플랫폼의 독립 sample 수.
-    한 sample 안의 반복 단어는 중복 가산하지 않는다.
-    """
+def build_daily_keyword_counts(signals: List[Dict]) -> Dict[Tuple[str, str, str], int]:
     counts = Counter()
-
     for signal in signals:
         platform = signal["platform"]
         region = signal["region"]
         keyword_counts = count_keywords_in_text(signal["text"])
-
         for keyword in keyword_counts:
             counts[(keyword, platform, region)] += 1
-
     return counts
 
-
-def save_keyword_counts(
-    signal_date: str,
-    counts: Dict[Tuple[str, str, str], int]
-):
+def save_keyword_counts(signal_date: str, counts: Dict[Tuple[str, str, str], int]):
     if not counts:
         return
-
     conn = get_db()
-
     for (keyword, platform, region), mentions in counts.items():
         conn.execute("""
-            INSERT INTO keyword_daily
-            (
-                signal_date, keyword, platform,
-                region, mentions
-            )
+            INSERT INTO keyword_daily (signal_date, keyword, platform, region, mentions)
             VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(
-                signal_date, keyword,
-                platform, region
-            )
-            DO UPDATE SET
-                mentions = excluded.mentions
-        """, (
-            signal_date, keyword,
-            platform, region, mentions
-        ))
-
+            ON CONFLICT(signal_date, keyword, platform, region)
+            DO UPDATE SET mentions = excluded.mentions
+        """, (signal_date, keyword, platform, region, mentions))
     conn.commit()
     conn.close()
 
-
 # ============================================================
-# 13. Social Trend Calculation
+# 13. Social Trend Calculation + Flow Engine
 # ============================================================
-
-def get_keyword_daily_history(
-    keyword: str,
-    end_date: str,
-    days: int
-) -> List[Tuple[str, int]]:
+def get_keyword_daily_history(keyword: str, end_date: str, days: int) -> List[Tuple[str, int]]:
     conn = get_db()
-
     rows = conn.execute("""
         SELECT signal_date, SUM(mentions) AS total_mentions
         FROM keyword_daily
@@ -1798,112 +1348,53 @@ def get_keyword_daily_history(
           AND signal_date >= date(?, ?)
         GROUP BY signal_date
         ORDER BY signal_date ASC
-    """, (
-        keyword, end_date, end_date, f"-{days} day"
-    )).fetchall()
-
+    """, (keyword, end_date, end_date, f"-{days} day")).fetchall()
     conn.close()
+    return [(row["signal_date"], row["total_mentions"]) for row in rows]
 
-    return [
-        (row["signal_date"], row["total_mentions"])
-        for row in rows
-    ]
-
-
-def calculate_velocity(
-    today_mentions: float,
-    history: List[Tuple[str, int]]
-) -> Tuple[float, bool]:
-    previous_values = [
-        mentions
-        for _, mentions in history
-        if mentions > 0
-    ]
-
+def calculate_velocity(today_mentions: float, history: List[Tuple[str, int]]) -> Tuple[float, bool]:
+    previous_values = [mentions for _, mentions in history if mentions > 0]
     if not previous_values:
         return 0.0, False
-
     avg_previous = sum(previous_values) / len(previous_values)
-
     if avg_previous <= 0:
         return 0.0, False
+    return ((today_mentions - avg_previous) / avg_previous, True)
 
-    return (
-        (today_mentions - avg_previous) / avg_previous,
-        True
-    )
-
-
-def calculate_persistence(
-    history: List[Tuple[str, int]],
-    window_days: int = 7
-) -> float:
+def calculate_persistence(history: List[Tuple[str, int]], window_days: int = 7) -> float:
     if not history:
         return 0.0
-
-    active_days = sum(
-        1 for _, mentions in history
-        if mentions > 0
-    )
-
+    active_days = sum(1 for _, mentions in history if mentions > 0)
     return min(active_days / window_days, 1.0)
 
-
-def calculate_cross_platform(
-    keyword: str,
-    signal_date: str
-) -> float:
+def calculate_cross_platform(keyword: str, signal_date: str) -> float:
     conn = get_db()
-
     rows = conn.execute("""
         SELECT DISTINCT platform
         FROM keyword_daily
-        WHERE keyword = ?
-          AND signal_date = ?
-          AND mentions > 0
+        WHERE keyword = ? AND signal_date = ? AND mentions > 0
     """, (keyword, signal_date)).fetchall()
-
     conn.close()
-
     platforms = {row["platform"] for row in rows}
     return min(len(platforms) / 3.0, 1.0)
 
-
-def calculate_regional_score(
-    keyword: str,
-    signal_date: str
-) -> float:
+def calculate_regional_score(keyword: str, signal_date: str) -> float:
     conn = get_db()
-
     rows = conn.execute("""
         SELECT DISTINCT region
         FROM keyword_daily
-        WHERE keyword = ?
-          AND signal_date = ?
-          AND mentions > 0
+        WHERE keyword = ? AND signal_date = ? AND mentions > 0
     """, (keyword, signal_date)).fetchall()
-
     conn.close()
-
     regions = {row["region"] for row in rows}
     return min(len(regions) / 2.0, 1.0)
-
 
 def calculate_volume_score(today_mentions: float) -> float:
     if today_mentions <= 0:
         return 0.0
+    return min(math.log1p(today_mentions) / math.log1p(30), 1.0)
 
-    return min(
-        math.log1p(today_mentions) / math.log1p(30),
-        1.0
-    )
-
-
-def calculate_trend_status(
-    velocity: float,
-    has_history: bool,
-    persistence: float
-) -> str:
+def calculate_trend_status(velocity: float, has_history: bool, persistence: float) -> str:
     if not has_history:
         return "INSUFFICIENT DATA"
     if velocity >= 0.50:
@@ -1916,17 +1407,7 @@ def calculate_trend_status(
         return "ESTABLISHED"
     return "EMERGING"
 
-
-
-
-def calculate_platform_normalized_score(
-    keyword: str,
-    signal_date: str
-) -> float:
-    """
-    플랫폼별 샘플 수가 다르므로 단순 mentions 합산 대신
-    각 플랫폼 내 keyword 비율을 평균한다.
-    """
+def calculate_platform_normalized_score(keyword: str, signal_date: str) -> float:
     conn = get_db()
     rows = conn.execute("""
         SELECT platform,
@@ -1944,15 +1425,11 @@ def calculate_platform_normalized_score(
         kw = row["kw_mentions"] or 0
         if total > 0:
             rates.append(min(kw / total, 1.0))
-
     if not rates:
         return 0.0
-
     return sum(rates) / len(rates)
 
-
 def calculate_generic_penalty(keyword: str) -> float:
-    """너무 일반적인 카테고리 단어가 상위권을 독점하지 않도록 약한 감점."""
     generic = {
         "skincare", "serum", "cream", "beauty", "sunscreen",
         "cleanser", "toner", "moisturizer", "mask", "cosmetics",
@@ -1960,44 +1437,186 @@ def calculate_generic_penalty(keyword: str) -> float:
     }
     return 0.72 if keyword.lower() in generic else 1.0
 
-def calculate_trend_scores(
-    signal_date: str,
-    daily_counts: Dict[Tuple[str, str, str], int]
-) -> List[Dict]:
-    keywords = {
-        keyword
-        for keyword, _, _
-        in daily_counts.keys()
+def _load_keyword_series_map(signal_date: str, days: int = 28) -> Dict[str, Dict[str, int]]:
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT keyword, signal_date, SUM(mentions) AS m
+        FROM keyword_daily
+        WHERE signal_date <= ? AND signal_date >= date(?, ?)
+        GROUP BY keyword, signal_date
+    """, (signal_date, signal_date, f"-{days} day")).fetchall()
+    conn.close()
+
+    series_map: Dict[str, Dict[str, int]] = {}
+    for r in rows:
+        series_map.setdefault(r["keyword"], {})[r["signal_date"]] = r["m"]
+    return series_map
+
+def _series_from_map(series_map: Dict[str, Dict[str, int]], keyword: str, signal_date: str, days: int = 28) -> List[Tuple[str, int]]:
+    by_date = series_map.get(keyword, {})
+    end = datetime.date.fromisoformat(signal_date)
+    out = []
+    for i in range(days - 1, -1, -1):
+        d = (end - datetime.timedelta(days=i)).isoformat()
+        out.append((d, by_date.get(d, 0)))
+    return out
+
+def calculate_ema(values: List[float], alpha: float) -> float:
+    if not values:
+        return 0.0
+    ema = values[0]
+    for v in values[1:]:
+        ema = alpha * v + (1 - alpha) * ema
+    return ema
+
+def calculate_flow_metrics_from_series(series: List[Tuple[str, int]]) -> Dict:
+    values = [m for _, m in series]
+    log_vals = [math.log1p(v) for v in values]
+
+    ema7 = calculate_ema(log_vals[-7:], 0.35)
+    ema28 = calculate_ema(log_vals, 0.15)
+
+    hist = log_vals[:-1]
+    if hist:
+        mean = sum(hist) / len(hist)
+        var = sum((v - mean) ** 2 for v in hist) / len(hist)
+        z = (log_vals[-1] - mean) / (math.sqrt(var) + 1e-6)
+    else:
+        z = 0.0
+
+    return {
+        "today_mentions": values[-1] if values else 0,
+        "ema7": ema7,
+        "ema28": ema28,
+        "momentum": ema7 - ema28,
+        "z_score": z,
+        "active_days_7": sum(1 for v in values[-7:] if v > 0),
+        "active_days_14": sum(1 for v in values[-14:] if v > 0),
+        "active_days_28": sum(1 for v in values if v > 0),
     }
 
+def calculate_weighted_volume_score(platform_mentions: Dict[str, int]) -> float:
+    if not platform_mentions:
+        return 0.0
+    weighted_sum = sum(m * _platform_weight(p) for p, m in platform_mentions.items())
+    total_weight = sum(_platform_weight(p) for p in platform_mentions)
+    if total_weight <= 0:
+        return 0.0
+    return min(math.log1p(weighted_sum / total_weight) / math.log1p(30), 1.0)
+
+def calculate_validation_score(platforms: set, has_commercial: bool, active_days_7: int) -> float:
+    score = 0.0
+    if "youtube" in platforms and "amazon" in platforms:
+        score += 0.45
+    elif "amazon" in platforms:
+        score += 0.25
+    elif "youtube" in platforms:
+        score += 0.20
+
+    if "tiktok" in platforms and ("instagram" in platforms or "youtube" in platforms):
+        score += 0.20
+    if has_commercial:
+        score += 0.20
+    if active_days_7 >= 3:
+        score += 0.15
+
+    return min(score, 1.0)
+
+def calculate_observation_confidence(platforms: set, active_days_14: int) -> float:
+    if not platforms:
+        return 1.0
+    if active_days_14 <= 1:
+        if platforms == {"tiktok"}:
+            return 0.70
+        if len(platforms) == 1:
+            return 0.85
+    return 1.0
+
+def classify_lifecycle(flow: Dict, platforms: set, validation: float) -> str:
+    today = flow["today_mentions"]
+    a7 = flow["active_days_7"]
+    a14 = flow["active_days_14"]
+    ema7 = flow["ema7"]
+    ema28 = flow["ema28"]
+
+    if today <= 0 and a14 == 0:
+        return "DORMANT"
+
+    if a14 <= 2:
+        if platforms and platforms <= {"tiktok"} and today > 0:
+            return "NOISE_CANDIDATE"
+        return "SEED"
+
+    if ema7 < ema28 * 0.75:
+        return "COOLING"
+
+    if validation >= 0.5 and a14 >= 4:
+        return "SCALING"
+
+    if ema7 > ema28 * 1.15 and a7 >= 2:
+        return "EMERGING"
+
+    if a14 >= 8:
+        return "ESTABLISHED"
+
+    return "WATCH"
+
+def calculate_trend_scores(signal_date: str, daily_counts: Dict[Tuple[str, str, str], int]) -> List[Dict]:
+    keywords = {keyword for keyword, _, _ in daily_counts.keys()}
+
+    series_map = _load_keyword_series_map(signal_date, 28)
+
+    conn = get_db()
+    platform_rows = conn.execute("""
+        SELECT keyword, GROUP_CONCAT(DISTINCT platform) AS platforms
+        FROM keyword_daily
+        WHERE signal_date = ? AND mentions > 0
+        GROUP BY keyword
+    """, (signal_date,)).fetchall()
+    keyword_platforms = {
+        r["keyword"]: {p for p in r["platforms"].split(",") if p}
+        for r in platform_rows
+    }
+
+    commercial_rows = conn.execute("""
+        SELECT DISTINCT keyword
+        FROM google_signals
+        WHERE signal_date = ? AND intent = 'commercial'
+    """, (signal_date,)).fetchall()
+    conn.close()
+    commercial_keywords = {r["keyword"] for r in commercial_rows}
+
+    platform_mentions_today: Dict[str, Dict[str, int]] = {}
+    for (kw, platform, _region), mentions in daily_counts.items():
+        pm = platform_mentions_today.setdefault(kw, {})
+        pm[platform] = pm.get(platform, 0) + mentions
+
     results = []
-
     for keyword in keywords:
-        today_mentions = sum(
-            mentions
-            for (kw, _, _), mentions
-            in daily_counts.items()
-            if kw == keyword
-        )
-
-        history = get_keyword_daily_history(
-            keyword, signal_date, 7
-        )
-
-        velocity, has_history = calculate_velocity(
-            today_mentions, history
-        )
-
+        today_mentions = sum(platform_mentions_today.get(keyword, {}).values())
+        history = get_keyword_daily_history(keyword, signal_date, 7)
+        velocity, has_history = calculate_velocity(today_mentions, history)
         persistence = calculate_persistence(history, 7)
-        cross_platform = calculate_cross_platform(
-            keyword, signal_date
+        cross_platform = calculate_cross_platform(keyword, signal_date)
+        regional = calculate_regional_score(keyword, signal_date)
+        platform_normalized = calculate_platform_normalized_score(keyword, signal_date)
+
+        platforms = keyword_platforms.get(keyword, set())
+        flow = calculate_flow_metrics_from_series(
+            _series_from_map(series_map, keyword, signal_date, 28)
         )
-        regional = calculate_regional_score(
-            keyword, signal_date
+        validation = calculate_validation_score(
+            platforms,
+            keyword in commercial_keywords,
+            flow["active_days_7"]
         )
-        volume_score = calculate_volume_score(today_mentions)
-        platform_normalized = calculate_platform_normalized_score(
-            keyword, signal_date
+        observation_conf = calculate_observation_confidence(
+            platforms,
+            flow["active_days_14"]
+        )
+
+        volume_score = calculate_weighted_volume_score(
+            platform_mentions_today.get(keyword, {})
         )
 
         if has_history:
@@ -2006,68 +1625,78 @@ def calculate_trend_scores(
         else:
             velocity_score = 0.5
 
-        # 신규 발견은 volume보다 cross-platform/velocity를 더 중요하게 본다.
+        momentum_score = max(0.0, min(1.0, 0.5 + flow["momentum"] / 2.0))
+        persistence_14 = min(flow["active_days_14"] / 7.0, 1.0)
+
         base_score = (
             volume_score * 0.15
-            + velocity_score * 0.30
-            + persistence * 0.20
+            + velocity_score * 0.20
+            + persistence * 0.10
+            + persistence_14 * 0.15
             + cross_platform * 0.20
             + regional * 0.05
             + platform_normalized * 0.10
+            + momentum_score * 0.05
         ) * 100
 
-        trend_score = base_score * calculate_generic_penalty(keyword)
+        trend_score = (
+            base_score
+            * calculate_generic_penalty(keyword)
+            * observation_conf
+            * (1.0 + 0.25 * validation)
+        )
+
+        lifecycle = classify_lifecycle(flow, platforms, validation)
+        flow_score = trend_score * (0.5 + 0.5 * persistence_14)
 
         results.append({
             "keyword": keyword,
             "today_mentions": today_mentions,
             "velocity": velocity,
             "has_history": has_history,
-            "status": calculate_trend_status(
-                velocity, has_history, persistence
-            ),
+            "status": calculate_trend_status(velocity, has_history, persistence),
+            "lifecycle": lifecycle,
+            "z_score": flow["z_score"],
+            "active_days_14": flow["active_days_14"],
+            "validation_score": validation,
             "volume_score": volume_score * 100,
             "velocity_score": velocity_score * 100,
             "persistence_score": persistence * 100,
             "cross_platform_score": cross_platform * 100,
             "regional_score": regional * 100,
             "platform_normalized_score": platform_normalized * 100,
+            "flow_score": flow_score,
             "trend_score": trend_score
         })
 
-    results.sort(
-        key=lambda x: x["trend_score"],
-        reverse=True
-    )
-
+    results.sort(key=lambda x: x["trend_score"], reverse=True)
     return results
 
-
-def save_trend_scores(
-    signal_date: str,
-    scores: List[Dict]
-):
+def save_trend_scores(signal_date: str, scores: List[Dict]):
     conn = get_db()
-
     for item in scores:
         conn.execute("""
-            INSERT INTO trend_scores
-            (
+            INSERT INTO trend_scores (
                 signal_date, keyword,
                 volume_score, velocity_score,
                 persistence_score, cross_platform_score,
-                regional_score, platform_normalized_score, trend_score
+                regional_score, platform_normalized_score, trend_score,
+                flow_score, z_score, active_days_14, validation_score, lifecycle
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(signal_date, keyword)
-            DO UPDATE SET
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(signal_date, keyword) DO UPDATE SET
                 volume_score = excluded.volume_score,
                 velocity_score = excluded.velocity_score,
                 persistence_score = excluded.persistence_score,
                 cross_platform_score = excluded.cross_platform_score,
                 regional_score = excluded.regional_score,
                 platform_normalized_score = excluded.platform_normalized_score,
-                trend_score = excluded.trend_score
+                trend_score = excluded.trend_score,
+                flow_score = excluded.flow_score,
+                z_score = excluded.z_score,
+                active_days_14 = excluded.active_days_14,
+                validation_score = excluded.validation_score,
+                lifecycle = excluded.lifecycle
         """, (
             signal_date,
             item["keyword"],
@@ -2077,206 +1706,141 @@ def save_trend_scores(
             item["cross_platform_score"],
             item["regional_score"],
             item.get("platform_normalized_score", 0),
-            item["trend_score"]
+            item["trend_score"],
+            item.get("flow_score", 0),
+            item.get("z_score", 0),
+            item.get("active_days_14", 0),
+            item.get("validation_score", 0),
+            item.get("lifecycle", "")
         ))
-
     conn.commit()
     conn.close()
-
 
 # ============================================================
 # 14. Google summary
 # ============================================================
-
-def get_google_summary(
-    signal_date: str,
-    regions: List[str]
-) -> str:
+def get_google_summary(signal_date: str, regions: List[str]) -> str:
     conn = get_db()
-
     lines = []
-
     for region in regions:
         rows = conn.execute("""
-            SELECT
-                keyword,
-                intent,
-                interest_score,
-                rising_score,
-                source
+            SELECT keyword, intent, interest_score, rising_score, source
             FROM google_signals
             WHERE signal_date = ?
               AND region = ?
-              AND (
-                  query_type = 'related_candidate'
-                  OR query_type = 'interest'
-              )
+              AND (query_type = 'related_candidate' OR query_type = 'interest')
             ORDER BY
-                CASE
-                    WHEN rising_score IS NULL THEN -999999
-                    ELSE rising_score
-                END DESC,
-                CASE
-                    WHEN interest_score IS NULL THEN -999999
-                    ELSE interest_score
-                END DESC
+                CASE WHEN rising_score IS NULL THEN -999999 ELSE rising_score END DESC,
+                CASE WHEN interest_score IS NULL THEN -999999 ELSE interest_score END DESC
             LIMIT 20
         """, (signal_date, region)).fetchall()
 
         lines.append(f"[Google {region}]")
-
         if not rows:
             lines.append("No Google beauty discovery data today.")
             continue
 
         seen = set()
-
         for row in rows:
             keyword = row["keyword"]
             if keyword in seen:
                 continue
             seen.add(keyword)
 
-            interest = (
-                f"{row['interest_score']:.0f}"
-                if row["interest_score"] is not None
-                else "NA"
-            )
-
-            rising = (
-                f"{row['rising_score']:+.1f}%"
-                if row["rising_score"] is not None
-                else "NA"
-            )
+            interest = f"{row['interest_score']:.0f}" if row["interest_score"] is not None else "NA"
+            rising = f"{row['rising_score']:+.1f}%" if row["rising_score"] is not None else "NA"
 
             lines.append(
-                f"- {keyword} | "
-                f"intent={row['intent']} | "
-                f"interest={interest} | "
-                f"rising={rising} | "
-                f"source={row['source']}"
+                f"- {keyword} | intent={row['intent']} | interest={interest} | rising={rising} | source={row['source']}"
             )
-
     conn.close()
     return "\n".join(lines)
 
-
-def get_google_candidate_list(
-    signal_date: str,
-    limit: int = 30
-) -> List[str]:
+def get_google_candidate_list(signal_date: str, limit: int = 30) -> List[str]:
     conn = get_db()
-
     rows = conn.execute("""
         SELECT keyword
         FROM google_signals
         WHERE signal_date = ?
         ORDER BY
-            CASE
-                WHEN rising_score IS NULL THEN 0
-                ELSE rising_score
-            END DESC,
-            CASE
-                WHEN interest_score IS NULL THEN 0
-                ELSE interest_score
-            END DESC
+            CASE WHEN rising_score IS NULL THEN 0 ELSE rising_score END DESC,
+            CASE WHEN interest_score IS NULL THEN 0 ELSE interest_score END DESC
         LIMIT ?
     """, (signal_date, limit)).fetchall()
-
     conn.close()
 
     output = []
     seen = set()
-
     for row in rows:
         kw = row["keyword"]
         if kw not in seen:
             seen.add(kw)
             output.append(kw)
-
     return output
-
 
 # ============================================================
 # 15. Trend Summary
 # ============================================================
-
 def get_keyword_platforms(keyword: str, signal_date: str) -> str:
-    """Return comma-separated platform list for a keyword on a given date."""
     conn = get_db()
     rows = conn.execute("""
         SELECT platform, SUM(mentions) AS m
         FROM keyword_daily
-        WHERE keyword = ?
-          AND signal_date = ?
-          AND mentions > 0
+        WHERE keyword = ? AND signal_date = ? AND mentions > 0
         GROUP BY platform
         ORDER BY m DESC
     """, (keyword, signal_date)).fetchall()
     conn.close()
-
     if not rows:
         return "none"
     return ", ".join(f"{r['platform']}({r['m']})" for r in rows)
-
 
 def build_trend_summary(scores: List[Dict], signal_date: str = None) -> str:
     if not scores:
         return "No quantitative social trend score available today."
 
     lines = []
-
     for rank, item in enumerate(scores[:10], start=1):
         velocity_text = (
             f"{item['velocity'] * 100:+.1f}%"
             if item["has_history"]
             else "INSUFFICIENT_HISTORY"
         )
-
         platforms_text = "unknown"
         if signal_date:
             platforms_text = get_keyword_platforms(item["keyword"], signal_date)
 
         lines.append(
             f"{rank}. {item['keyword']} | "
+            f"lifecycle={item.get('lifecycle', 'NA')} | "
             f"status={item['status']} | "
             f"mentions={item['today_mentions']} | "
             f"platforms=[{platforms_text}] | "
             f"velocity={velocity_text} | "
-            f"persistence={item['persistence_score']:.0f}/100 | "
+            f"active14={item.get('active_days_14', 0)}d | "
+            f"validation={item.get('validation_score', 0):.2f} | "
+            f"z={item.get('z_score', 0):+.1f} | "
             f"cross_platform={item['cross_platform_score']:.0f}/100 | "
-            f"regional={item['regional_score']:.0f}/100 | "
             f"TREND_SCORE={item['trend_score']:.1f}/100"
         )
-
     return "\n".join(lines)
-
-
 
 # ============================================================
 # 16. Gemini
 # ============================================================
-
 def call_gemini_api(prompt: str) -> str:
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY is missing.")
 
-    url = (
-        "https://generativelanguage.googleapis.com/"
-        f"v1beta/models/{GEMINI_MODEL}:generateContent"
-    )
-
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     headers = {
         "Content-Type": "application/json",
         "x-goog-api-key": GEMINI_API_KEY
     }
-
     payload = {
         "contents": [
             {
-                "parts": [
-                    {"text": prompt}
-                ]
+                "parts": [{"text": prompt}]
             }
         ],
         "generationConfig": {
@@ -2285,57 +1849,31 @@ def call_gemini_api(prompt: str) -> str:
         }
     }
 
-    res = session.post(
-        url,
-        headers=headers,
-        json=payload,
-        timeout=60
-    )
+    res = session.post(url, headers=headers, json=payload, timeout=60)
 
-    # 404는 잘못된/폐기된 모델명일 가능성이 높다. fallback 1회로 보고서 전체 실패를 막는다.
     if res.status_code == 404 and GEMINI_MODEL != GEMINI_FALLBACK_MODEL:
-        fallback_url = (
-            "https://generativelanguage.googleapis.com/"
-            f"v1beta/models/{GEMINI_FALLBACK_MODEL}:generateContent"
-        )
-        logging.warning(
-            "Gemini model %s returned 404; retrying with %s",
-            GEMINI_MODEL, GEMINI_FALLBACK_MODEL
-        )
-        res = session.post(
-            fallback_url,
-            headers=headers,
-            json=payload,
-            timeout=60
-        )
+        fallback_url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_FALLBACK_MODEL}:generateContent"
+        logging.warning("Gemini model %s returned 404; retrying with %s", GEMINI_MODEL, GEMINI_FALLBACK_MODEL)
+        res = session.post(fallback_url, headers=headers, json=payload, timeout=60)
 
     if res.status_code != 200:
-        logging.error(
-            "Gemini API HTTP %s: %s",
-            res.status_code, res.text[:1000]
-        )
-        raise RuntimeError(
-            f"Gemini API failed with status {res.status_code}"
-        )
+        logging.error("Gemini API HTTP %s: %s", res.status_code, res.text[:1000])
+        raise RuntimeError(f"Gemini API failed with status {res.status_code}")
 
     data = res.json()
     candidates = data.get("candidates", [])
-
     if not candidates:
         raise RuntimeError("Gemini API returned no candidates.")
 
     parts = candidates[0].get("content", {}).get("parts", [])
-
     if not parts:
         raise RuntimeError("Gemini API response parts empty.")
 
     report_text = parts[0].get("text", "").strip()
-
     if not report_text:
         raise RuntimeError("Gemini returned empty report.")
 
     return report_text
-
 
 def generate_gemini_report(
     google_summary: str,
@@ -2345,32 +1883,22 @@ def generate_gemini_report(
     trend_summary: str
 ) -> str:
     social_lines = []
-
     for item in social_data:
         platform = item.get("platform", "")
         query = item.get("query", "")
         tag = item.get("tag", "")
         region = item.get("region", "")
         text = item.get("text", "")
-
         source = platform
         if query:
             source += f"/{query}"
         if tag:
             source += f"/#{tag}"
-
-        social_lines.append(
-            f"[{source} | {region}] {text}"
-        )
+        social_lines.append(f"[{source} | {region}] {text}")
 
     social_text = "\n".join(social_lines)
     social_count = len(social_data)
-
-    google_candidates_text = (
-        ", ".join(google_candidates)
-        if google_candidates
-        else "NONE"
-    )
+    google_candidates_text = ", ".join(google_candidates) if google_candidates else "NONE"
 
     if social_count == 0 and not google_summary.strip():
         data_status = """
@@ -2390,35 +1918,35 @@ If a Google value is NA, do not invent a number.
 """
 
     prompt = f"""
-You are a market-intelligence analyst tracking cosmetics and skincare
-consumer interest in Western Europe — the Netherlands, Germany, Belgium,
-and Arab/Middle-Eastern communities living in Europe. You are NOT
-analyzing this from a Korean-brand or "K-Beauty" angle; you simply track
-which ingredients, product formats, and skin concerns these consumers
-are actually interested in right now, regardless of a product's country
-of origin. Your job is NOT to write retail merchandising advice or
-shelf-display concepts.
-Your sole purpose is to detect what's happening TODAY: which signals are
-real (with evidence), which look like noise, and what that means in a
-couple of plain sentences. Deep flow/lifecycle analysis (theme trends
-over time) belongs in the WEEKLY and MONTHLY reports, not here — keep
-this one short and concrete.
+You are a market-intelligence analyst tracking cosmetics and skincare consumer interest in Western Europe — the Netherlands, Germany, Belgium, and Arab/Middle-Eastern communities living in Europe.
+You are NOT analyzing this from a Korean-brand or "K-Beauty" angle.
+Your job is to detect what's happening TODAY: which signals are real, which look like noise, and what that means briefly.
 
 Generate a DAILY WESTERN-EUROPE COSMETICS & SKINCARE TREND REPORT.
 
 {data_status}
 
 IMPORTANT DATA MODEL:
-1. TikTok = early viral / discovery signal.
-2. Instagram = secondary social / content confirmation.
-3. Amazon = purchase-stage signal (commercial demand already present).
-4. Google = independent search-market discovery.
-5. YouTube = longer-form interest / review confirmation (sustained
-   interest, not pure virality).
-6. Single-platform weak signals are not confirmed trends.
-7. Google Autocomplete candidates are NOT volume scores. Do not invent
-   numbers. Do not claim direct comparability of relative scores across
-   different comparison groups.
+TikTok = early viral / discovery signal.
+Instagram = secondary social confirmation.
+Amazon = purchase-stage signal.
+Google = independent search-market discovery.
+YouTube = review / sustained interest confirmation.
+Single-platform weak signals are not confirmed trends.
+Google Autocomplete candidates are NOT volume scores.
+
+LIFECYCLE TAGS:
+SEED = first sightings only, hypothesis stage.
+NOISE_CANDIDATE = one-day single-platform spike.
+EMERGING = recent days clearly above longer-term level.
+SCALING = confirmed on review/purchase platforms such as YouTube/Amazon.
+ESTABLISHED = appears on most days, stable interest.
+COOLING = recent days clearly below longer-term level.
+
+ROTATION CAUTION:
+Collection queries rotate daily under strict API quotas.
+A keyword absent today may simply not have been queried.
+Never say it "disappeared" unless it is missing for several days across multiple platforms.
 
 GOOGLE INDEPENDENT DISCOVERY:
 {google_summary}
@@ -2437,189 +1965,79 @@ LIVE SOCIAL SAMPLES:
 
 ========================================================
 ANALYSIS TASK
-========================================================
-
-Internally grade each major signal with a star rating (do not print the
-tier name):
-- ★★★ : cross-platform social + independent Google and/or Amazon support
-- ★★  : only one strong source (Google intent OR solid social/Amazon)
-- ★   : weak / single / flat signal — watch only
+Internally grade each major signal with a star rating:
+★★★ : cross-platform social + independent Google and/or Amazon support
+★★ : only one strong source
+★ : weak / single / flat signal
 
 CRITICAL RULES:
-- Star rating alone is never enough. Every TOP signal must include an
-  explicit data-analysis sentence naming the platforms where it appeared
-  (use the platforms=[...] field and LIVE SOCIAL SAMPLES). Never invent
-  a platform absent from the data.
-- This is a DAILY snapshot — keep language SIMPLE and DIRECT. Do NOT use
-  technical jargon like "velocity", "persistence", "acceleration", or
-  "cross-platform confirmation score" in the output text. The underlying
-  numbers exist, just describe them as natural sentences instead of
-  labeled metrics:
-  - "velocity" → describe as how fast it's showing up today
-    (e.g. "오늘 하루 만에 여러 플랫폼에서 동시에 나타났다")
-  - "persistence" → describe as how many days it's kept appearing
-    (e.g. "3일째 계속 보이고 있다")
-  - "acceleration" → describe as speeding up or slowing down in plain terms
-  Do not label these as metrics; fold them into the sentence naturally.
-- Distinguish measured evidence from hypothesis.
-- Do not overstate small samples. These are directional signals.
+Every TOP signal must include an explicit data-analysis sentence naming the platforms where it appeared.
+Do not invent a platform absent from the data.
+Use plain language, not technical jargon.
+Do not overstate small samples.
 
-Focus geography & themes:
-- Netherlands / Western Europe
-- Germany
-- Belgium
-- Arabic / Middle Eastern customer signals (if present in data)
-- Ingredients, product formats, skin concerns, and commercial-intent shifts
-
-========================================================
-STRICT LANGUAGE & ORDER RULES
-========================================================
-
-The report MUST contain exactly THREE sections separated by
-===SPLIT_SECTION===.
-
-Order:
-1. KOREAN
-2. ARABIC
-3. ENGLISH
-
+STRICT LANGUAGE & ORDER RULES:
+The report MUST contain exactly THREE sections separated by ===SPLIT_SECTION===.
+Order: KOREAN, ARABIC, ENGLISH.
 Do not include Dutch or German.
-Do NOT include shelf/display/bundle concepts.
-Do NOT write detailed "order this SKU" retail sourcing plans.
-Keep any implication short and trend-focused.
-Keep the WHOLE report short — this is a daily snapshot, not a deep report.
-Flow/lifecycle-stage analysis belongs in the weekly/monthly reports.
+Keep it short.
 
 --- SECTION 1 ---
 Title: 🌐 글로벌 화장품 & 스킨케어 시장 데일리 트렌드 리포트
-
-1. 📊 오늘의 데이터 분석 (TOP 5)
-For every signal:
-- Title + star rating on the same line
-  (e.g. "① 여드름 & BHA/살리실산 모공 솔루션 ★★★")
-- Right under it: a short, plain-language sentence stating WHERE it was
-  mentioned (platforms from platforms=[...] and samples), how fast it's
-  showing up today, and how many days it's kept appearing — written as
-  natural sentences, not as labeled metrics.
-Do NOT use bracket labels like [CONFIRMED].
-Do NOT output only stars without source analysis.
-
-2. 🔇 노이즈 구분
-- Signals that look like a one-day spike, not a real trend
-- Weak signals with no cross-platform confirmation
-One short sentence per item is enough.
-
-3. 📌 짧은 시사점 (2-3문장)
-Trend-monitoring implications only. No shelf concepts, no detailed
-sourcing/marketing plans. Example tone: "PDRN 관련 신호는 오늘 여러
-플랫폼에서 동시에 나타났다 — 계속 지켜볼 가치가 있다."
+📊 오늘의 데이터 분석 (TOP 5)
+🔇 노이즈 구분
+📌 짧은 시사점 (2-3문장)
 
 ===SPLIT_SECTION===
 
 --- SECTION 2 ---
 Title: 🌐 التقرير اليومي العالمي لاتجاهات مستحضرات التجميل والعناية بالبشرة
-
-1. 📊 تحليل بيانات اليوم (أفضل 5)
-Same structure as Korean section 1 (title + star, plain-language
-platform/source analysis, no technical jargon). No stars-only output.
-
-2. 🔇 تمييز الضوضاء
-Same content focus as Korean section 2.
-
-3. 📌 ملاحظات قصيرة
-Trend-monitoring implications only (2-3 sentences). No shelf or
-detailed sourcing advice.
+📊 تحليل بيانات اليوم (أفضل 5)
+🔇 تمييز الضوضاء
+📌 ملاحظات قصيرة
 
 ===SPLIT_SECTION===
 
 --- SECTION 3 ---
 Title: 🌐 GLOBAL COSMETICS & SKINCARE MARKET DAILY TREND REPORT
-
-1. 📊 TODAY'S DATA ANALYSIS (TOP 5)
-Same structure as Korean section 1: title + star, explicit platform/
-source analysis from the data, in plain language (no "velocity" /
-"persistence" jargon — describe speed and duration as natural sentences).
-Do NOT output only the star rating.
-
-2. 🔇 NOISE CHECK
-- Signals that look like a one-day spike / noise
-- Weak signals with no cross-platform confirmation
-
-3. 📌 SHORT IMPLICATIONS
-2-3 sentences of trend-monitoring implications only.
-No shelf/display concepts and no detailed retailer sourcing plans.
+📊 TODAY'S DATA ANALYSIS (TOP 5)
+🔇 NOISE CHECK
+📌 SHORT IMPLICATIONS
 """
-
     return call_gemini_api(prompt)
 
-
 # ============================================================
-# 16b. Weekly Rollup (주말 요약)
+# 16b. Weekly Rollup
 # ============================================================
-
-WEEKLY_SUMMARY_WEEKDAY = 5  # Python date.weekday(): Mon=0 ... Sat=5, Sun=6
-
-# 연습/테스트용: 이 환경변수를 true로 주면 요일/월말 여부와 상관없이
-# 주간·월간 리포트를 매번 생성해서 텔레그램까지 발송한다.
-# 실제 운영(GitHub Actions 정기 실행)에서는 이 값을 설정하지 않으면
-# 기존 스케줄(토요일 / 매월 마지막 날) 그대로 동작한다.
-FORCE_ROLLUPS = os.getenv("FORCE_ROLLUPS", "").strip().lower() in (
-    "1", "true", "yes"
-)
-
+WEEKLY_SUMMARY_WEEKDAY = 5
+FORCE_ROLLUPS = os.getenv("FORCE_ROLLUPS", "").strip().lower() in ("1", "true", "yes")
 
 def is_weekly_summary_day() -> bool:
     if FORCE_ROLLUPS:
         return True
     return get_market_now().date().weekday() == WEEKLY_SUMMARY_WEEKDAY
 
-
 def is_monthly_summary_day() -> bool:
-    """그 달의 마지막 날에만 True (매일 도는 워크플로우 기준)."""
     if FORCE_ROLLUPS:
         return True
     today = get_market_now().date()
     last_day = calendar.monthrange(today.year, today.month)[1]
     return today.day == last_day
 
-
 def get_past_month_dates(signal_date: str) -> List[str]:
-    """
-    이번 달 1일부터 오늘(=월말)까지의 날짜 리스트를 반환한다.
-    주간 롤업과 달리 요일 제한 없이 그 달에 실제로 수집된 모든 날짜를 포함한다.
-    """
     today = datetime.date.fromisoformat(signal_date)
     first_day = today.replace(day=1)
     days_in_month = (today - first_day).days + 1
-    return [
-        (first_day + datetime.timedelta(days=i)).isoformat()
-        for i in range(days_in_month)
-    ]
-
+    return [(first_day + datetime.timedelta(days=i)).isoformat() for i in range(days_in_month)]
 
 def get_past_weekday_dates(signal_date: str) -> List[str]:
-    """
-    이번 주(월~금)의 날짜 리스트를 반환한다.
-    토요일에 실행되면 바로 직전의 월~금이 대상이 된다.
-    """
     today = datetime.date.fromisoformat(signal_date)
-    # 이번 주 월요일 = 오늘 - (오늘의 weekday 값)
     monday = today - datetime.timedelta(days=today.weekday())
-    return [
-        (monday + datetime.timedelta(days=i)).isoformat()
-        for i in range(5)  # Mon~Fri
-    ]
-
+    return [(monday + datetime.timedelta(days=i)).isoformat() for i in range(5)]
 
 def get_preceding_dates(date_list: List[str], count: int) -> List[str]:
-    """
-    date_list의 가장 이른 날짜보다 이전에 DB에 실제로 존재하는 signal_date를
-    최대 count개까지 가져온다 (직전 기간과의 비교용).
-    주말/공휴일 등으로 데이터가 비는 날이 있어도 실제 존재하는 날짜만 쓴다.
-    """
     if not date_list:
         return []
-
     conn = get_db()
     earliest = min(date_list)
     rows = conn.execute("""
@@ -2630,21 +2048,9 @@ def get_preceding_dates(date_list: List[str], count: int) -> List[str]:
         LIMIT ?
     """, (earliest, count)).fetchall()
     conn.close()
-
     return sorted(row["signal_date"] for row in rows)
 
-
-def build_period_delta(
-    current_dates: List[str],
-    previous_dates: List[str]
-) -> str:
-    """
-    이번 기간(current_dates) vs 직전 기간(previous_dates)을 비교해서
-    - 신규 진입 키워드
-    - 급상승 키워드 (직전 대비 1.5배 이상)
-    - 냉각/이탈 키워드 (직전 대비 절반 이하, 또는 이번 기간에 아예 사라짐)
-    를 코드로 직접 계산해서 텍스트로 반환한다. (LLM이 숫자를 추측하지 않도록)
-    """
+def build_period_delta(current_dates: List[str], previous_dates: List[str]) -> str:
     if not previous_dates:
         return "No previous-period data available yet for comparison."
 
@@ -2653,379 +2059,253 @@ def build_period_delta(
     prev_ph = ",".join("?" for _ in previous_dates)
 
     cur_score_rows = conn.execute(f"""
-        SELECT keyword, SUM(trend_score) AS total_score
+        SELECT keyword, SUM(trend_score) AS total_score, COUNT(DISTINCT signal_date) AS days
         FROM trend_scores
         WHERE signal_date IN ({cur_ph})
         GROUP BY keyword
     """, current_dates).fetchall()
 
     prev_score_rows = conn.execute(f"""
-        SELECT keyword, SUM(trend_score) AS total_score
+        SELECT keyword, SUM(trend_score) AS total_score, COUNT(DISTINCT signal_date) AS days
         FROM trend_scores
         WHERE signal_date IN ({prev_ph})
         GROUP BY keyword
     """, previous_dates).fetchall()
-
     conn.close()
 
-    cur_scores = {r["keyword"]: r["total_score"] for r in cur_score_rows}
-    prev_scores = {r["keyword"]: r["total_score"] for r in prev_score_rows}
+    cur_scores = {r["keyword"]: (r["total_score"], r["days"]) for r in cur_score_rows}
+    prev_scores = {r["keyword"]: (r["total_score"], r["days"]) for r in prev_score_rows}
 
     new_entries, rising, cooling = [], [], []
 
     for kw in set(cur_scores) | set(prev_scores):
-        cur_s = cur_scores.get(kw, 0.0)
-        prev_s = prev_scores.get(kw, 0.0)
+        cur_s, cur_d = cur_scores.get(kw, (0.0, 0))
+        prev_s, prev_d = prev_scores.get(kw, (0.0, 0))
 
         if prev_s == 0 and cur_s > 0:
-            new_entries.append((kw, cur_s))
+            new_entries.append((kw, cur_s, cur_d))
         elif prev_s > 0 and cur_s == 0:
-            cooling.append((kw, prev_s, 0.0))
+            cooling.append((kw, prev_s, prev_d, 0.0, 0))
         elif prev_s > 0 and cur_s >= prev_s * 1.5:
-            rising.append((kw, prev_s, cur_s))
+            rising.append((kw, prev_s, prev_d, cur_s, cur_d))
         elif prev_s > 0 and cur_s <= prev_s * 0.5:
-            cooling.append((kw, prev_s, cur_s))
+            cooling.append((kw, prev_s, prev_d, cur_s, cur_d))
 
     new_entries.sort(key=lambda x: -x[1])
-    rising.sort(key=lambda x: -(x[2] - x[1]))
-    cooling.sort(key=lambda x: (x[1] - x[2]) * -1 if x[2] else -x[1])
+    rising.sort(key=lambda x: -(x[3] - x[1]))
+    cooling.sort(key=lambda x: (x[1] - x[3]) if x[3] else x[1], reverse=True)
 
     lines = []
     lines.append("신규 진입 (직전 기간엔 없다가 이번 기간에 새로 나타남):")
-    lines += [f"- {kw}: 관심도 {s:.1f}" for kw, s in new_entries[:15]] or ["- none"]
+    lines += [f"- {kw}: 관심도 {s:.1f}, 관찰일 {d}일" for kw, s, d in new_entries[:15]] or ["- none"]
     lines.append("")
     lines.append("급상승 (직전 기간 대비 1.5배 이상):")
-    lines += [f"- {kw}: {p:.1f} -> {c:.1f}" for kw, p, c in rising[:15]] or ["- none"]
+    lines += [f"- {kw}: {p:.1f}({pd}일) -> {c:.1f}({cd}일)" for kw, p, pd, c, cd in rising[:15]] or ["- none"]
     lines.append("")
     lines.append("냉각/이탈 (직전 기간 대비 절반 이하로 하락, 또는 사라짐):")
-    lines += [f"- {kw}: {p:.1f} -> {c:.1f}" for kw, p, c in cooling[:15]] or ["- none"]
+    lines += [f"- {kw}: {p:.1f}({pd}일) -> {c:.1f}({cd}일)" for kw, p, pd, c, cd in cooling[:15]] or ["- none"]
 
     return "\n".join(lines)
 
+def build_theme_rollup(date_list: List[str]) -> str:
+    if not date_list:
+        return "No theme data."
 
-def build_weekly_rollup(date_list: List[str]) -> str:
-    """
-    trend_scores를 주간 단위로 집계해서 키워드 랭킹 텍스트로 반환한다.
-    (플랫폼별 집계는 더 이상 리포트에 포함하지 않는다.)
-    """
+    conn = get_db()
+    ph = ",".join("?" for _ in date_list)
+    rows = conn.execute(f"""
+        SELECT keyword, SUM(mentions) AS m, COUNT(DISTINCT signal_date) AS days
+        FROM keyword_daily
+        WHERE signal_date IN ({ph})
+        GROUP BY keyword
+    """, date_list).fetchall()
+    conn.close()
+
+    themes: Dict[str, Dict] = {}
+    for r in rows:
+        t = keyword_theme(r["keyword"])
+        if t == "other":
+            continue
+        agg = themes.setdefault(t, {"mentions": 0, "keywords": []})
+        agg["mentions"] += r["m"]
+        agg["keywords"].append((r["keyword"], r["m"], r["days"]))
+
+    lines = []
+    for t, agg in sorted(themes.items(), key=lambda kv: -kv[1]["mentions"]):
+        top = sorted(agg["keywords"], key=lambda x: -x[1])[:4]
+        kw_txt = ", ".join(f"{k}({m}회/{d}일)" for k, m, d in top)
+        lines.append(f"- {t}: 총 {agg['mentions']} mentions | 대표: {kw_txt}")
+
+    return "\n".join(lines) if lines else "No theme data."
+
+def _build_period_rollup(date_list: List[str], limit: int) -> str:
     if not date_list:
         return "No data."
 
     conn = get_db()
     placeholders = ",".join("?" for _ in date_list)
-
-    keyword_rows = conn.execute(f"""
+    rows = conn.execute(f"""
         SELECT
             keyword,
             SUM(trend_score) AS total_score,
             AVG(trend_score) AS avg_score,
             MAX(trend_score) AS peak_score,
-            COUNT(DISTINCT signal_date) AS active_days
+            COUNT(DISTINCT signal_date) AS active_days,
+            AVG(cross_platform_score) AS avg_cross
         FROM trend_scores
         WHERE signal_date IN ({placeholders})
         GROUP BY keyword
-        ORDER BY total_score DESC
-        LIMIT 25
     """, date_list).fetchall()
-
     conn.close()
 
-    keyword_lines = []
-    for row in keyword_rows:
-        keyword_lines.append(
-            f"- {row['keyword']}: "
-            f"평균 관심도={row['avg_score']:.1f}, "
-            f"최고 관심도={row['peak_score']:.1f}, "
-            f"관심 지속일={row['active_days']}/5일"
+    period_days = len(date_list)
+    scored = []
+
+    for r in rows:
+        coverage = r["active_days"] / period_days if period_days else 0.0
+        flow = (r["total_score"] / period_days) * math.log2(r["active_days"] + 1)
+        flow *= (0.7 + 0.3 * coverage)
+        flow *= (1.0 + 0.15 * (r["avg_cross"] or 0) / 100.0)
+        scored.append((r, flow))
+
+    scored.sort(key=lambda x: -x[1])
+
+    lines = []
+    for r, flow in scored[:limit]:
+        lines.append(
+            f"- {r['keyword']}: flow={flow:.1f} | "
+            f"평균={r['avg_score']:.1f} | 최고={r['peak_score']:.1f} | "
+            f"지속일={r['active_days']}/{period_days}일"
         )
 
-    return (
-        "\n".join(keyword_lines)
-        if keyword_lines
-        else "No weekly keyword data."
-    )
+    return "\n".join(lines) if lines else "No keyword data."
 
+def build_weekly_rollup(date_list: List[str]) -> str:
+    return _build_period_rollup(date_list, 25)
 
-def generate_weekly_summary_report(
-    date_list: List[str],
-    keyword_rollup: str,
-    delta_text: str
-) -> str:
+def build_monthly_rollup(date_list: List[str]) -> str:
+    return _build_period_rollup(date_list, 30)
+
+def generate_weekly_summary_report(date_list: List[str], keyword_rollup: str, delta_text: str) -> str:
+    theme_rollup = build_theme_rollup(date_list)
     prompt = f"""
-You are a market-intelligence analyst tracking cosmetics and skincare
-consumer interest in Western Europe — the Netherlands, Germany, Belgium,
-and Arab/Middle-Eastern communities living in Europe. You are NOT
-analyzing this from a Korean-brand or "K-Beauty" angle; you track which
-ingredients, product formats, and skin concerns these consumers are
-actually interested in, regardless of a product's country of origin.
-Focus on TRENDS and FLOWS — not retail merchandising or detailed
-sourcing plans.
+You are a market-intelligence analyst tracking cosmetics and skincare consumer interest in Western Europe.
+Generate a WEEKLY WESTERN-EUROPE COSMETICS & SKINCARE TREND & FLOW ROLLUP covering {date_list[0]} to {date_list[-1]}.
+Focus on TRENDS and FLOWS, not retail merchandising.
 
-Generate a WEEKLY WESTERN-EUROPE COSMETICS & SKINCARE TREND & FLOW ROLLUP
-covering {date_list[0]} to {date_list[-1]} (Mon-Fri), based on aggregated
-quantitative interest scores collected this week. Weekend data collection
-continues separately and is not part of this rollup.
-
-WEEKLY KEYWORD RANKING (by aggregated interest score):
+WEEKLY KEYWORD RANKING (by flow score = consistency-weighted interest):
 {keyword_rollup}
 
-WEEK-OVER-WEEK DELTA (computed directly from the database, not estimated —
-this compares this week to the most recent previous period of data on file):
+THEME ROLLUP (mentions aggregated by theme, computed from DB):
+{theme_rollup}
+
+WEEK-OVER-WEEK DELTA:
 {delta_text}
 
-========================================================
-ANALYSIS TASK
-========================================================
+Use the delta and theme rollup as ground truth.
+Do not invent items that are not present.
+Group keywords into 2-4 themes.
+Be honest about data limitations.
 
-This is a FLOW report — the point is to show what CHANGED, not just what
-ranked highest. Use the WEEK-OVER-WEEK DELTA block above as ground truth
-for "new / rising / cooling" — do not invent items that aren't in it, and
-do not skip it just because the keyword ranking list looks similar.
-
-For every keyword you highlight as a major signal (new, rising, or
-cooling), tag it with ONE simple status based on the delta data:
-- 🆕 신규 등장 : 직전 기간에는 없었다가 이번 주 새로 나타남
-- 📈 상승세 : 직전 기간 대비 뚜렷하게 관심도가 올라감
-- ✅ 꾸준함 : 이번 주 내내 안정적으로 관심이 유지됨
-- 📉 냉각/둔화 : 한때 강했지만 이번 주 관심도가 크게 줄어듦
-
-Also group related keywords into 2-4 THEMES (not a flat keyword list) using
-categories like: 성분(ingredient), 피부 고민(concern), 제품 포맷(format).
-Explain the theme's direction as a whole, then mention the 1-2 keywords
-that best represent it. Example: "장벽·진정 테마에 대한 관심이 꾸준히 커지고
-있으며, 그중 PDRN 성분이 가장 빠르게 확산되고 있다" is more useful than
-listing PDRN alone.
-
-Do not overstate small samples. Be honest about data limitations — if the
-delta block says "No previous-period data available yet", say so plainly
-instead of fabricating a comparison.
-Do NOT write shelf/display concepts or detailed "order this SKU" plans.
-
-========================================================
-STRICT LANGUAGE & ORDER RULES
-========================================================
-
-The report MUST contain exactly THREE sections separated by
-===SPLIT_SECTION===, in this order: KOREAN, ARABIC, ENGLISH.
-Do not include Dutch or German.
+The report MUST contain exactly THREE sections separated by ===SPLIT_SECTION===.
+Order: KOREAN, ARABIC, ENGLISH.
 
 --- SECTION 1 ---
 Title: 📅 주간 화장품 & 스킨케어 트렌드 요약 ({date_list[0]} ~ {date_list[-1]})
-
-1. 🔄 이번 주 핵심 변화
-   신규 진입 / 급상승 / 냉각 키워드를 DELTA 데이터 기준으로 짧게 짚어준다.
-   각 항목에 상태 태그(🆕/📈/✅/📉)를 붙인다.
-2. 🧩 테마로 보기
-   개별 키워드 대신 2-4개 테마로 묶어서 상위 흐름을 설명한다.
-3. 🏆 이번 주 가장 꾸준했던 트렌드 TOP 5
-   (하루 반짝이 아니라 한 주 내내 관심이 이어진 것 — 관심 지속일 기준)
-4. ⚠️ 일시적 스파이크(노이즈) 주의 키워드
-5. 📌 다음 주 추적 포인트 (트렌드 모니터링 관점, 2-4문장)
+🔄 이번 주 핵심 변화
+🧩 테마로 보기
+🏆 이번 주 가장 꾸준했던 트렌드 TOP 5
+⚠️ 일시적 스파이크(노이즈) 주의 키워드
+📌 다음 주 추적 포인트
 
 ===SPLIT_SECTION===
 
 --- SECTION 2 ---
 Title: 📅 ملخص أسبوعي لاتجاهات مستحضرات التجميل والعناية بالبشرة
-
-1. 🔄 أهم التغييرات هذا الأسبوع (جديد / صاعد / يبرد، مع وسم حالة كل إشارة
-   🆕/📈/✅/📉)
-2. 🧩 التجميع حسب الثيمات (2-4 ثيمات بدلاً من كلمات مفردة)
-3. 🏆 أكثر 5 اتجاهات ثباتاً هذا الأسبوع
-4. ⚠️ كلمات مفتاحية قد تكون ضجة مؤقتة فقط
-5. 📌 نقاط المتابعة للأسبوع القادم
+🔄 أهم التغييرات هذا الأسبوع
+🧩 التجميع حسب الثيمات
+🏆 أكثر 5 اتجاهات ثباتاً هذا الأسبوع
+⚠️ كلمات مفتاحية قد تكون ضجة مؤقتة فقط
+📌 نقاط المتابعة للأسبوع القادم
 
 ===SPLIT_SECTION===
 
 --- SECTION 3 ---
 Title: 📅 WEEKLY COSMETICS & SKINCARE TREND ROLLUP ({date_list[0]} ~ {date_list[-1]})
-
-1. 🔄 KEY CHANGES THIS WEEK
-   New / rising / cooling keywords, from the DELTA data above. Tag each
-   with a status (🆕/📈/✅/📉).
-2. 🧩 THEMES, NOT JUST KEYWORDS
-   Group into 2-4 themes and describe the overall direction of each.
-3. 🏆 TOP 5 MOST CONSISTENT TRENDS THIS WEEK (by days active, not spikes)
-4. ⚠️ KEYWORDS THAT LOOK LIKE ONE-DAY NOISE
-5. 📌 NEXT-WEEK TRACKING POINTS (trend-monitoring only, 2-4 sentences)
+🔄 KEY CHANGES THIS WEEK
+🧩 THEMES, NOT JUST KEYWORDS
+🏆 TOP 5 MOST CONSISTENT TRENDS THIS WEEK
+⚠️ KEYWORDS THAT LOOK LIKE ONE-DAY NOISE
+📌 NEXT-WEEK TRACKING POINTS
 """
-
     return call_gemini_api(prompt)
 
-
-# ============================================================
-# 16c. Monthly Rollup (월말 요약)
-# ============================================================
-
-def build_monthly_rollup(date_list: List[str]) -> str:
-    """
-    trend_scores를 월 단위로 집계해서 키워드 랭킹 텍스트로 반환한다.
-    build_weekly_rollup과 동일한 구조이지만 집계 기간이 그 달 전체이고,
-    상위 30개까지 보여준다 (월간은 노출 후보가 더 많을 수 있어서).
-    (플랫폼별 집계는 더 이상 리포트에 포함하지 않는다.)
-    """
-    if not date_list:
-        return "No data."
-
-    conn = get_db()
-    placeholders = ",".join("?" for _ in date_list)
+def generate_monthly_summary_report(date_list: List[str], keyword_rollup: str, delta_text: str) -> str:
     total_days = len(date_list)
-
-    keyword_rows = conn.execute(f"""
-        SELECT
-            keyword,
-            SUM(trend_score) AS total_score,
-            AVG(trend_score) AS avg_score,
-            MAX(trend_score) AS peak_score,
-            COUNT(DISTINCT signal_date) AS active_days
-        FROM trend_scores
-        WHERE signal_date IN ({placeholders})
-        GROUP BY keyword
-        ORDER BY total_score DESC
-        LIMIT 30
-    """, date_list).fetchall()
-
-    conn.close()
-
-    keyword_lines = []
-    for row in keyword_rows:
-        keyword_lines.append(
-            f"- {row['keyword']}: "
-            f"평균 관심도={row['avg_score']:.1f}, "
-            f"최고 관심도={row['peak_score']:.1f}, "
-            f"관심 지속일={row['active_days']}/{total_days}일"
-        )
-
-    return (
-        "\n".join(keyword_lines)
-        if keyword_lines
-        else "No monthly keyword data."
-    )
-
-
-def generate_monthly_summary_report(
-    date_list: List[str],
-    keyword_rollup: str,
-    delta_text: str
-) -> str:
-    total_days = len(date_list)
-
+    theme_rollup = build_theme_rollup(date_list)
     prompt = f"""
-You are a market-intelligence analyst tracking cosmetics and skincare
-consumer interest in Western Europe — the Netherlands, Germany, Belgium,
-and Arab/Middle-Eastern communities living in Europe. You are NOT
-analyzing this from a Korean-brand or "K-Beauty" angle; you track which
-ingredients, product formats, and skin concerns these consumers are
-actually interested in, regardless of a product's country of origin.
-Focus on TRENDS and FLOWS — not retail merchandising, shelf concepts, or
-detailed sourcing plans.
+You are a market-intelligence analyst tracking cosmetics and skincare consumer interest in Western Europe.
+Generate a MONTHLY WESTERN-EUROPE COSMETICS & SKINCARE TREND & FLOW ROLLUP covering {date_list[0]} to {date_list[-1]} ({total_days} days).
+Focus on TRENDS and FLOWS, not retail merchandising.
 
-Generate a MONTHLY WESTERN-EUROPE COSMETICS & SKINCARE TREND & FLOW ROLLUP
-covering {date_list[0]} to {date_list[-1]} ({total_days} days), based on
-aggregated quantitative interest scores collected across the whole month.
-
-MONTHLY KEYWORD RANKING (by aggregated interest score, {total_days}-day window):
+MONTHLY KEYWORD RANKING (by flow score = consistency-weighted interest):
 {keyword_rollup}
 
-MONTH-OVER-MONTH DELTA (computed directly from the database, not estimated —
-compares this month to the most recent previous period of data on file):
+THEME ROLLUP (mentions aggregated by theme, computed from DB):
+{theme_rollup}
+
+MONTH-OVER-MONTH DELTA:
 {delta_text}
 
-========================================================
-ANALYSIS TASK
-========================================================
+Use the delta and theme rollup as ground truth.
+Do not invent items that are not present.
+Group keywords into 2-4 themes.
+Be honest about data limitations.
 
-This is a FLOW report — the point is to show what CHANGED over the month,
-not just what ranked highest. Use the MONTH-OVER-MONTH DELTA block above
-as ground truth for "new / rising / cooling" — do not invent items that
-aren't in it.
-
-For every keyword you highlight as a major signal (new, rising, or
-cooling), tag it with ONE simple status based on the delta data:
-- 🆕 신규 등장 : 직전 기간에는 없었다가 이번 달 새로 나타남
-- 📈 상승세 : 직전 기간 대비 뚜렷하게 관심도가 올라감
-- ✅ 꾸준함 : 이번 달 내내 안정적으로 관심이 유지됨
-- 📉 냉각/둔화 : 한때 강했지만 이번 달 관심도가 크게 줄어듦
-
-Also group related keywords into 2-4 THEMES (not a flat keyword list) using
-categories like: 성분(ingredient), 피부 고민(concern), 제품 포맷(format).
-Describe the theme's overall trajectory across the month, then mention the
-1-2 keywords that best represent it.
-
-Also cover which keywords held the strongest, most persistent interest
-across the WHOLE month (high 관심 지속일 relative to {total_days}, not
-just a few good days).
-
-Do not overstate small samples. Be honest about data limitations — if the
-delta block says "No previous-period data available yet", say so plainly
-instead of fabricating a comparison.
-Do NOT write shelf/display concepts or detailed "order this SKU" plans.
-
-========================================================
-STRICT LANGUAGE & ORDER RULES
-========================================================
-
-The report MUST contain exactly THREE sections separated by
-===SPLIT_SECTION===, in this order: KOREAN, ARABIC, ENGLISH.
-Do not include Dutch or German.
+The report MUST contain exactly THREE sections separated by ===SPLIT_SECTION===.
+Order: KOREAN, ARABIC, ENGLISH.
 
 --- SECTION 1 ---
 Title: 🗓️ 월간 화장품 & 스킨케어 트렌드 요약 ({date_list[0]} ~ {date_list[-1]})
-
-1. 🔄 이번 달 핵심 변화
-   신규 진입 / 급상승 / 냉각 키워드를 DELTA 데이터 기준으로 짚어준다.
-   각 항목에 상태 태그(🆕/📈/✅/📉)를 붙인다.
-2. 🧩 테마로 보기
-   개별 키워드 대신 2-4개 테마로 묶어서 한 달간의 흐름을 설명한다.
-3. 🏆 이달의 TOP 5 지속 트렌드 (별점 ★★★/★★/★ 로 신뢰도 표시)
-4. 📉 반짝 스파이크였던 노이즈 키워드
-5. 📌 다음 달 추적 포인트 (트렌드 모니터링 관점, 2-4문장)
+🔄 이번 달 핵심 변화
+🧩 테마로 보기
+🏆 이달의 TOP 5 지속 트렌드
+📉 반짝 스파이크였던 노이즈 키워드
+📌 다음 달 추적 포인트
 
 ===SPLIT_SECTION===
 
 --- SECTION 2 ---
 Title: 🗓️ ملخص شهري لاتجاهات مستحضرات التجميل والعناية بالبشرة
-
-1. 🔄 أهم التغييرات هذا الشهر (جديد / صاعد / يبرد، مع وسم حالة كل إشارة
-   🆕/📈/✅/📉)
-2. 🧩 التجميع حسب الثيمات (2-4 ثيمات)
-3. 🏆 أفضل 5 اتجاهات مستمرة هذا الشهر (تقييم بالنجوم ★★★/★★/★)
-4. 📉 كلمات مفتاحية كانت ضجة مؤقتة فقط
-5. 📌 نقاط المتابعة للشهر القادم
+🔄 أهم التغييرات هذا الشهر
+🧩 التجميع حسب الثيمات
+🏆 أفضل 5 اتجاهات مستمرة هذا الشهر
+📉 كلمات مفتاحية كانت ضجة مؤقتة فقط
+📌 نقاط المتابعة للشهر القادم
 
 ===SPLIT_SECTION===
 
 --- SECTION 3 ---
 Title: 🗓️ MONTHLY COSMETICS & SKINCARE TREND ROLLUP ({date_list[0]} ~ {date_list[-1]})
-
-1. 🔄 KEY CHANGES THIS MONTH
-   New / rising / cooling keywords, from the DELTA data above. Tag each
-   with a status (🆕/📈/✅/📉).
-2. 🧩 THEMES, NOT JUST KEYWORDS
-   Group into 2-4 themes and describe each theme's trajectory this month.
-3. 🏆 TOP 5 PERSISTENT TRENDS THIS MONTH (star rating ★★★/★★/★)
-4. 📉 KEYWORDS THAT LOOK LIKE BRIEF NOISE/HYPE
-5. 📌 NEXT-MONTH TRACKING POINTS (trend-monitoring only, 2-4 sentences)
+🔄 KEY CHANGES THIS MONTH
+🧩 THEMES, NOT JUST KEYWORDS
+🏆 TOP 5 PERSISTENT TRENDS THIS MONTH
+📉 KEYWORDS THAT LOOK LIKE BRIEF NOISE/HYPE
+📌 NEXT-MONTH TRACKING POINTS
 """
-
     return call_gemini_api(prompt)
-
 
 # ============================================================
 # 17. Telegram
 # ============================================================
-
 def send_telegram_message(message: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         logging.warning("Telegram credentials missing. Message not sent.")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
     max_length = 4000
-    chunks = [
-        message[i:i + max_length]
-        for i in range(0, len(message), max_length)
-    ]
+    chunks = [message[i:i + max_length] for i in range(0, len(message), max_length)]
 
     for chunk in chunks:
         try:
@@ -3037,80 +2317,36 @@ def send_telegram_message(message: str):
                 },
                 timeout=15
             )
-
             if res.status_code != 200:
-                logging.warning(
-                    "Telegram failed HTTP %s: %s",
-                    res.status_code, res.text
-                )
-
+                logging.warning("Telegram failed HTTP %s: %s", res.status_code, res.text)
         except Exception as e:
-            logging.error(
-                "Telegram notification failed: %s", e
-            )
-
+            logging.error("Telegram notification failed: %s", e)
 
 # ============================================================
 # 18. Main Pipeline
 # ============================================================
-
 def main():
-    logging.info("=== Daily Cosmetics Trend Bot Started ===")
-
+    logging.info("=== Daily Cosmetics Trend Bot Started (V3 Flow Engine) ===")
     try:
         init_database()
-
         signal_date = get_today_iso()
         regions = ["NL", "DE"]
 
-        logging.info(
-            "This week's dynamic keyword pool (%s): %s",
-            get_iso_week_id(), get_weekly_dynamic_pool()
-        )
-        logging.info(
-            "Today's TikTok queries: %s",
-            get_today_tiktok_queries()
-        )
-        logging.info(
-            "Today's Instagram Apify tags: %s",
-            get_today_apify_instagram_tags()
-        )
-        logging.info(
-            "Today's Google groups: %s",
-            get_today_google_group_names()
-        )
+        logging.info("This week's dynamic keyword pool (%s): %s", get_iso_week_id(), get_weekly_dynamic_pool())
+        logging.info("Today's TikTok queries: %s", get_today_tiktok_queries())
+        logging.info("Today's Instagram Apify tags: %s", get_today_apify_instagram_tags())
+        logging.info("Today's Google groups: %s", get_today_google_group_names())
 
-        # ----------------------------------------------------
-        # 1. Google independent discovery
-        # ----------------------------------------------------
-        logging.info(
-            "Collecting independent Google beauty signals..."
-        )
-
-        google_data = collect_google_independent_signals(
-            signal_date, regions
-        )
-
+        logging.info("Collecting independent Google beauty signals...")
+        google_data = collect_google_independent_signals(signal_date, regions)
         for region, items in google_data.items():
-            logging.info(
-                "Google autocomplete accepted signals [%s]: %d",
-                region, len(items)
-            )
+            logging.info("Google autocomplete accepted signals [%s]: %d", region, len(items))
 
-        # Daily general RSS는 보조적인 시장 context로만 저장
         google_nl_rss = fetch_google_daily_rss("NL", 15)
         google_de_rss = fetch_google_daily_rss("DE", 15)
+        save_google_daily_rss(signal_date, "NL", google_nl_rss)
+        save_google_daily_rss(signal_date, "DE", google_de_rss)
 
-        save_google_daily_rss(
-            signal_date, "NL", google_nl_rss
-        )
-        save_google_daily_rss(
-            signal_date, "DE", google_de_rss
-        )
-
-        # ----------------------------------------------------
-        # 2. Social signals
-        # ----------------------------------------------------
         logging.info("Fetching TikTok...")
         tiktok_signals = fetch_tiktok_captions()
 
@@ -3123,76 +2359,26 @@ def main():
         logging.info("Fetching YouTube via official Data API v3...")
         youtube_signals = fetch_youtube_trends()
 
-        all_signals = (
-            tiktok_signals +
-            amazon_signals +
-            instagram_signals +
-            youtube_signals
-        )
-
+        all_signals = tiktok_signals + amazon_signals + instagram_signals + youtube_signals
         save_raw_signals(all_signals)
 
-        # ----------------------------------------------------
-        # 3. Social keyword counts
-        # ----------------------------------------------------
-        daily_counts = build_daily_keyword_counts(
-            all_signals
-        )
+        daily_counts = build_daily_keyword_counts(all_signals)
+        save_keyword_counts(signal_date, daily_counts)
 
-        save_keyword_counts(
-            signal_date,
-            daily_counts
-        )
+        trend_scores = calculate_trend_scores(signal_date, daily_counts)
+        save_trend_scores(signal_date, trend_scores)
 
-        # ----------------------------------------------------
-        # 4. Social trend scores
-        # ----------------------------------------------------
-        trend_scores = calculate_trend_scores(
-            signal_date,
-            daily_counts
-        )
-
-        save_trend_scores(
-            signal_date,
-            trend_scores
-        )
-
-        trend_summary_str = build_trend_summary(
-            trend_scores,
-            signal_date=signal_date
-        )
-
+        trend_summary_str = build_trend_summary(trend_scores, signal_date=signal_date)
 
         freq_lines = []
-
         for item in trend_scores[:20]:
-            freq_lines.append(
-                f"- {item['keyword']}: "
-                f"{item['today_mentions']} mentions"
-            )
+            freq_lines.append(f"- {item['keyword']}: {item['today_mentions']} mentions")
+        freq_summary_str = "\n".join(freq_lines) if freq_lines else "No vocabulary frequency data today."
 
-        freq_summary_str = (
-            "\n".join(freq_lines)
-            if freq_lines
-            else "No vocabulary frequency data today."
-        )
+        google_summary = get_google_summary(signal_date, regions)
+        google_candidates = get_google_candidate_list(signal_date, 30)
 
-        # ----------------------------------------------------
-        # 5. Google summary
-        # ----------------------------------------------------
-        google_summary = get_google_summary(
-            signal_date, regions
-        )
-
-        google_candidates = get_google_candidate_list(
-            signal_date, 30
-        )
-
-        # ----------------------------------------------------
-        # 6. Gemini
-        # ----------------------------------------------------
         logging.info("Generating Gemini report...")
-
         report = generate_gemini_report(
             google_summary=google_summary,
             google_candidates=google_candidates,
@@ -3201,132 +2387,57 @@ def main():
             trend_summary=trend_summary_str
         )
 
-        # ----------------------------------------------------
-        # 7. Telegram
-        # ----------------------------------------------------
-        sections = [
-            section.strip()
-            for section
-            in report.split("===SPLIT_SECTION===")
-            if section.strip()
-        ]
-
+        sections = [section.strip() for section in report.split("===SPLIT_SECTION===") if section.strip()]
         for index, section in enumerate(sections):
-            logging.info(
-                "Sending report section %d/%d",
-                index + 1, len(sections)
-            )
+            logging.info("Sending report section %d/%d", index + 1, len(sections))
             send_telegram_message(section)
 
-        # ----------------------------------------------------
-        # 8. Weekly rollup (토요일에만 추가 발송, 데이터 수집은 계속됨)
-        # ----------------------------------------------------
         if is_weekly_summary_day():
             try:
-                logging.info(
-                    "Today is the weekly summary day - "
-                    "building weekly rollup..."
-                )
-
+                logging.info("Today is the weekly summary day - building weekly rollup...")
                 week_dates = get_past_weekday_dates(signal_date)
-                keyword_rollup = build_weekly_rollup(
-                    week_dates
-                )
-                prev_week_dates = get_preceding_dates(
-                    week_dates, len(week_dates)
-                )
-                weekly_delta = build_period_delta(
-                    week_dates, prev_week_dates
-                )
+                keyword_rollup = build_weekly_rollup(week_dates)
+                prev_week_dates = get_preceding_dates(week_dates, len(week_dates))
+                weekly_delta = build_period_delta(week_dates, prev_week_dates)
 
-                weekly_report = generate_weekly_summary_report(
-                    week_dates, keyword_rollup, weekly_delta
-                )
-
-                weekly_sections = [
-                    section.strip()
-                    for section
-                    in weekly_report.split("===SPLIT_SECTION===")
-                    if section.strip()
-                ]
+                weekly_report = generate_weekly_summary_report(week_dates, keyword_rollup, weekly_delta)
+                weekly_sections = [s.strip() for s in weekly_report.split("===SPLIT_SECTION===") if s.strip()]
 
                 for index, section in enumerate(weekly_sections):
-                    logging.info(
-                        "Sending weekly report section %d/%d",
-                        index + 1, len(weekly_sections)
-                    )
+                    logging.info("Sending weekly report section %d/%d", index + 1, len(weekly_sections))
                     send_telegram_message(section)
 
             except Exception as e:
-                logging.error(
-                    "Weekly rollup failed (daily report already sent): %s",
-                    e, exc_info=True
-                )
-                send_telegram_error(
-                    f"Weekly rollup failed: {str(e)} "
-                    "(daily report was sent successfully)"
-                )
+                logging.error("Weekly rollup failed (daily report already sent): %s", e, exc_info=True)
+                send_telegram_error(f"Weekly rollup failed: {str(e)} (daily report was sent successfully)")
 
-        # ----------------------------------------------------
-        # 9. Monthly rollup (매월 말일에만 추가 발송, 데이터 수집은 계속됨)
-        # ----------------------------------------------------
         if is_monthly_summary_day():
             try:
-                logging.info(
-                    "Today is the monthly summary day - "
-                    "building monthly rollup..."
-                )
-
+                logging.info("Today is the monthly summary day - building monthly rollup...")
                 month_dates = get_past_month_dates(signal_date)
-                keyword_rollup = build_monthly_rollup(
-                    month_dates
-                )
-                prev_month_dates = get_preceding_dates(
-                    month_dates, len(month_dates)
-                )
-                monthly_delta = build_period_delta(
-                    month_dates, prev_month_dates
-                )
+                keyword_rollup = build_monthly_rollup(month_dates)
+                prev_month_dates = get_preceding_dates(month_dates, len(month_dates))
+                monthly_delta = build_period_delta(month_dates, prev_month_dates)
 
-                monthly_report = generate_monthly_summary_report(
-                    month_dates, keyword_rollup, monthly_delta
-                )
-
-                monthly_sections = [
-                    section.strip()
-                    for section
-                    in monthly_report.split("===SPLIT_SECTION===")
-                    if section.strip()
-                ]
+                monthly_report = generate_monthly_summary_report(month_dates, keyword_rollup, monthly_delta)
+                monthly_sections = [s.strip() for s in monthly_report.split("===SPLIT_SECTION===") if s.strip()]
 
                 for index, section in enumerate(monthly_sections):
-                    logging.info(
-                        "Sending monthly report section %d/%d",
-                        index + 1, len(monthly_sections)
-                    )
+                    logging.info("Sending monthly report section %d/%d", index + 1, len(monthly_sections))
                     send_telegram_message(section)
 
             except Exception as e:
-                logging.error(
-                    "Monthly rollup failed (daily report already sent): %s",
-                    e, exc_info=True
-                )
-                send_telegram_error(
-                    f"Monthly rollup failed: {str(e)} "
-                    "(daily report was sent successfully)"
-                )
+                logging.error("Monthly rollup failed (daily report already sent): %s", e, exc_info=True)
+                send_telegram_error(f"Monthly rollup failed: {str(e)} (daily report was sent successfully)")
 
         logging.info("Monthly API quota snapshot: %s", get_monthly_quota_snapshot())
-        logging.info(
-            "=== Daily Cosmetics Trend Bot Completed Successfully ==="
-        )
+        logging.info("=== Daily Cosmetics Trend Bot Completed Successfully ===")
 
     except Exception as e:
         err_msg = f"Pipeline execution failed: {str(e)}"
         logging.error(err_msg, exc_info=True)
         send_telegram_error(err_msg)
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
