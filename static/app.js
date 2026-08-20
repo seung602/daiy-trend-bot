@@ -1,383 +1,367 @@
-(() => {
-  const I18N = {
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+
+const state = {
+    lang: 'ko', kind: 'overall', page: 0, q: '', category: '',
+    products: [], currentPeriod: 'daily', hasMore: false,
+    initialLoad: 80, loadMoreStep: 50
+};
+let SUGGESTIONS = [];
+
+const T = {
     ko: {
-      eyebrow: "KOREA → EUROPE MARKET MONITOR",
-      title: "K-Beauty Trend Intelligence",
-      refresh: "새로고침",
-      ksignalTitle: "🇰🇷 한국 선행 랭킹",
-      ksignalHint: "Olive Young · Glowpick · Hwahae · Zigzag 등 국내 이커머스에서 빠르게 오르는 상품",
-      ksEmpty: "아직 K-Signal 데이터가 없습니다. 수집 파이프라인이 돌아간 뒤 표시됩니다.",
-      westTitle: "🌍 서구 시장 신호",
-      westHint: "TikTok · Amazon · Instagram · YouTube 기준 집계 (참고용 · 일별 검색 로테이션 있음)",
-      westEmpty: "서구 트렌드 점수 데이터가 없습니다.",
-      footer: "Read-only · 외부 API 호출 없음 · DB 스냅샷 기준",
-      allMalls: "전체",
-      items: "개 상품",
-      score: "종합 점수",
-      heat: "뜨는 속도",
-      boost: "가속 강도",
-      trust: "신호 신뢰도",
-      daysSeen: "등장 일수",
-      periodDay: "오늘",
-      periodWeek: "이번 주",
-      periodMonth: "이번 달",
-      subtitle: (from, to, period) => {
-        if (!to) return "데이터 대기 중";
-        if (period === "day") return `기준일 ${to}`;
-        return `${from} ~ ${to}`;
-      },
+        navTrend: '트렌드', navProducts: '상품',
+        eyebrow: 'K-BEAUTY MARKET SIGNALS', trendTitle: '오늘의 K-Beauty 트렌드',
+        trendSub: '검색·소셜·지역 신호를 기반으로 시장의 흐름을 봅니다.',
+        rising: '🔥 상승 트렌드', trendMatrix: '📈 트렌드 점수 매트릭스',
+        themeRollup: '🧩 테마별 트렌드', daily: '일간', weekly: '주간', monthly: '월간',
+        weeklyChanges: '🔄 이번 주 핵심 변화', weeklyTop: '🏆 주간 TOP 트렌드',
+        monthlyChanges: '🔄 이번 달 핵심 변화', monthlyTop: '🏆 월간 TOP 트렌드',
+        newEntries: '🆕 신규 진입', risingRank: '📈 상승', fallingRank: '📉 하락',
+        changeTitle: '▲▼ 랭킹 변동', changeSub: '어제 대비 랭킹 변화를 확인합니다',
+        productTitle: '상품 랭킹 & 전체 카탈로그',
+        productSub: '올리브영·다이소·자체 종합점수로 상품의 시장 위치를 비교합니다.',
+        overall: '종합랭킹', olive: '올리브영', daiso: '다이소', change: '▲▼ 변동',
+        scoreDesc: '(올리브영 순위 + 트렌드 + 리뷰 종합 점수 기준)',
+        catalog: '🛍️ 전체 상품 카탈로그', catalogSub: '카테고리·성분·키워드로 전체 상품을 탐색합니다.',
+        searchPh: '상품명·브랜드·성분 검색 (예: 레티놀 세럼)', allCategories: '전체 카테고리',
+        loadMore: '더 보기 (50)',
+        rank: '랭크', source: '채널', details: '상품 상세',
+        ingredients: '성분', product_type: '제품 유형', keywords: '키워드',
+        skin_type: '피부 타입', concerns: '고민', texture: '제형',
+        key_ingredients: '주요 성분', claims: '클레임',
+        noData: '데이터 없음', scoreNone: '데이터 부족',
+        mallOlive: '올리브영', mallDaiso: '다이소',
+        trendRising: '상승세', trendFalling: '하락세', trendFlat: '보합', trendNew: '신규'
     },
     en: {
-      eyebrow: "KOREA → EUROPE MARKET MONITOR",
-      title: "K-Beauty Trend Intelligence",
-      refresh: "Refresh",
-      ksignalTitle: "🇰🇷 Korea Upstream Ranking",
-      ksignalHint: "Fast-rising products on Olive Young, Glowpick, Hwahae, Zigzag and more",
-      ksEmpty: "No K-Signal data yet. It appears after the collector pipeline runs.",
-      westTitle: "🌍 Western Market Signals",
-      westHint: "From TikTok · Amazon · Instagram · YouTube (directional — daily query rotation)",
-      westEmpty: "No Western trend scores available.",
-      footer: "Read-only · no external API calls · DB snapshot",
-      allMalls: "All",
-      items: "products",
-      score: "Score",
-      heat: "Rising speed",
-      boost: "Acceleration",
-      trust: "Signal strength",
-      daysSeen: "Days seen",
-      periodDay: "Today",
-      periodWeek: "This week",
-      periodMonth: "This month",
-      subtitle: (from, to, period) => {
-        if (!to) return "Waiting for data";
-        if (period === "day") return `As of ${to}`;
-        return `${from} → ${to}`;
-      },
+        navTrend: 'Trends', navProducts: 'Products',
+        eyebrow: 'K-BEAUTY MARKET SIGNALS', trendTitle: "Today's K-Beauty Trends",
+        trendSub: 'Read market flow from search, social and regional signals.',
+        rising: '🔥 Rising Trends', trendMatrix: '📈 Trend Score Matrix',
+        themeRollup: '🧩 Theme Rollup', daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly',
+        weeklyChanges: '🔄 Key Changes This Week', weeklyTop: '🏆 Weekly TOP Trends',
+        monthlyChanges: '🔄 Key Changes This Month', monthlyTop: '🏆 Monthly TOP Trends',
+        newEntries: '🆕 New Entries', risingRank: '📈 Rising', fallingRank: '📉 Falling',
+        changeTitle: '▲▼ Rank Changes', changeSub: 'Compare with yesterday\'s ranking',
+        productTitle: 'Product Rankings & Full Catalog',
+        productSub: 'Compare market position using Olive Young, Daiso and a unified score.',
+        overall: 'Overall', olive: 'Olive Young', daiso: 'Daiso', change: '▲▼ Changes',
+        scoreDesc: '(Composite score: Rank + Trend + Reviews)',
+        catalog: '🛍️ Full Product Catalog', catalogSub: 'Explore products by category, ingredients and keywords.',
+        searchPh: 'Search (e.g., Retinol Serum)', allCategories: 'All categories',
+        loadMore: 'Load more (50)',
+        rank: 'Rank', source: 'Channel', details: 'Product Details',
+        ingredients: 'Ingredients', product_type: 'Product Type', keywords: 'Keywords',
+        skin_type: 'Skin Type', concerns: 'Concerns', texture: 'Texture',
+        key_ingredients: 'Key Ingredients', claims: 'Claims',
+        noData: 'No data', scoreNone: 'Not enough data',
+        mallOlive: 'Olive Young', mallDaiso: 'Daiso',
+        trendRising: 'Rising', trendFalling: 'Falling', trendFlat: 'Flat', trendNew: 'New'
     },
     ar: {
-      eyebrow: "KOREA → EUROPE MARKET MONITOR",
-      title: "K-Beauty Trend Intelligence",
-      refresh: "تحديث",
-      ksignalTitle: "🇰🇷 ترتيب كوريا (إشارة مبكرة)",
-      ksignalHint: "منتجات سريعة الصعود في Olive Young وGlowpick وHwahae وZigzag",
-      ksEmpty: "لا توجد بيانات K-Signal بعد.",
-      westTitle: "🌍 إشارات السوق الغربي",
-      westHint: "من TikTok وAmazon وInstagram وYouTube",
-      westEmpty: "لا توجد درجات اتجاه غربية.",
-      footer: "للقراءة فقط · بدون استدعاءات API خارجية",
-      allMalls: "الكل",
-      items: "منتج",
-      score: "النقاط",
-      heat: "سرعة الصعود",
-      boost: "التسارع",
-      trust: "قوة الإشارة",
-      daysSeen: "أيام الظهور",
-      periodDay: "اليوم",
-      periodWeek: "هذا الأسبوع",
-      periodMonth: "هذا الشهر",
-      subtitle: (from, to, period) => {
-        if (!to) return "في انتظار البيانات";
-        if (period === "day") return `حتى ${to}`;
-        return `${from} → ${to}`;
-      },
-    },
-  };
-
-  let lang = localStorage.getItem("kbeauty_lang") || "ko";
-  let period = localStorage.getItem("kbeauty_period") || "day";
-  let ksItems = [];
-  let activeMall = "all";
-  let lastMalls = [];
-
-  const $ = (id) => document.getElementById(id);
-
-  function pack() {
-    return I18N[lang] || I18N.ko;
-  }
-
-  function t(key) {
-    const val = pack()[key];
-    return typeof val === "string" ? val : key;
-  }
-
-  function applyI18n() {
-    document.documentElement.lang = lang;
-    document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
-    document.querySelectorAll("[data-i18n]").forEach((el) => {
-      const key = el.getAttribute("data-i18n");
-      const val = pack()[key];
-      if (typeof val === "string") el.textContent = val;
-    });
-    $("language").value = lang;
-    document.querySelectorAll(".period-tab").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.period === period);
-    });
-  }
-
-  function fmt(n, digits = 1) {
-    if (n === null || n === undefined || Number.isNaN(n)) return "—";
-    return Number(n).toFixed(digits);
-  }
-
-  function mallLabel(mall) {
-    if (!mall) return "—";
-    return lang === "ko" ? mall.name_ko || mall.name_en : mall.name_en || mall.name_ko;
-  }
-
-  function renderMallFilters(malls) {
-    lastMalls = malls || [];
-    const row = $("mallFilters");
-    row.innerHTML = "";
-    const all = document.createElement("button");
-    all.type = "button";
-    all.className = "chip" + (activeMall === "all" ? " active" : "");
-    all.textContent = t("allMalls");
-    all.onclick = () => {
-      activeMall = "all";
-      renderKsList();
-      renderMallFilters(lastMalls);
-    };
-    row.appendChild(all);
-
-    lastMalls.forEach((m) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "chip" + (activeMall === m.id ? " active" : "");
-      btn.textContent = `${mallLabel(m)} (${m.count})`;
-      btn.onclick = () => {
-        activeMall = m.id;
-        renderKsList();
-        renderMallFilters(lastMalls);
-      };
-      row.appendChild(btn);
-    });
-  }
-
-  function renderKsList() {
-    const list = $("ksList");
-    const empty = $("ksEmpty");
-    list.innerHTML = "";
-
-    const filtered =
-      activeMall === "all"
-        ? ksItems
-        : ksItems.filter((it) => it.mall && it.mall.id === activeMall);
-
-    if (!filtered.length) {
-      empty.classList.remove("hidden");
-      return;
+        navTrend: 'الاتجاهات', navProducts: 'المنتجات',
+        eyebrow: 'إشارات سوق K-BEAUTY', trendTitle: 'اتجاهات K-Beauty اليوم',
+        trendSub: 'اقرأ حركة السوق من إشارات البحث والتواصل والمناطق.',
+        rising: '🔥 الاتجاهات الصاعدة', trendMatrix: '📈 مصفوفة الدرجات',
+        themeRollup: '🧩 ملخص الثيمات', daily: 'يومي', weekly: 'أسبوعي', monthly: 'شهري',
+        weeklyChanges: '🔄 أهم التغييرات هذا الأسبوع', weeklyTop: '🏆 أفضل اتجاهات الأسبوع',
+        monthlyChanges: '🔄 أهم التغييرات هذا الشهر', monthlyTop: '🏆 أفضل اتجاهات الشهر',
+        newEntries: '🆕 جديد', risingRank: '📈 صاعد', fallingRank: '📉 هابط',
+        changeTitle: '▲▼ تغييرات الترتيب', changeSub: 'مقارنة مع ترتيب الأمس',
+        productTitle: 'ترتيب المنتجات والكتالوج الكامل',
+        productSub: 'قارن موقع المنتج باستخدام Olive Young وDaiso والدرجة الموحدة.',
+        overall: 'الترتيب العام', olive: 'Olive Young', daiso: 'Daiso', change: '▲▼ تغييرات',
+        scoreDesc: '(درجة مركبة: الترتيب + الاتجاه + المراجعات)',
+        catalog: '🛍️ كتالوج المنتجات', catalogSub: 'استكشف المنتجات حسب الفئة والمكونات.',
+        searchPh: 'ابحث (مثال: سيروم الريتينول)', allCategories: 'كل الفئات',
+        loadMore: 'عرض المزيد (50)',
+        rank: 'الترتيب', source: 'القناة', details: 'تفاصيل المنتج',
+        ingredients: 'المكونات', product_type: 'نوع المنتج', keywords: 'كلمات مفتاحية',
+        skin_type: 'نوع البشرة', concerns: 'المشاكل', texture: 'القوام',
+        key_ingredients: 'المكونات الرئيسية', claims: 'الادعاءات',
+        noData: 'لا توجد بيانات', scoreNone: 'بيانات غير كافية',
+        mallOlive: 'Olive Young', mallDaiso: 'Daiso',
+        trendRising: 'صاعد', trendFalling: 'هابط', trendFlat: 'مستقر', trendNew: 'جديد'
     }
-    empty.classList.add("hidden");
+};
 
-    filtered.forEach((it) => {
-      const card = document.createElement("article");
-      card.className = "ks-card";
+const THEME_T = {
+    ko: { barrier_soothing: '장벽·진정', sun_protection: '자외선 차단', acne_pore: '여드름·모공', brightening_pigment: ' 미백·색소', antiaging_regeneration: '안티에이징·재생', hydration: '수분·보습', other: '기타' },
+    en: { barrier_soothing: 'Barrier·Soothing', sun_protection: 'Sun Protection', acne_pore: 'Acne·Pore', brightening_pigment: 'Brightening·Pigment', antiaging_regeneration: 'Anti-aging·Regeneration', hydration: 'Hydration', other: 'Other' },
+    ar: { barrier_soothing: 'حاجز·تهدئة', sun_protection: 'حماية الشمس', acne_pore: 'حب الشباب·المسام', brightening_pigment: 'تفتيح·تصبغات', antiaging_regeneration: 'مكافحة الشيخوخة', hydration: 'ترطيب', other: 'أخرى' }
+};
 
-      const rank = document.createElement("div");
-      rank.className = "ks-rank" + (it.rank <= 3 ? " top3" : "");
-      rank.textContent = it.rank;
+function tr(k) { return T[state.lang][k] || T.en[k] || k; }
+function themeT(key) { return (THEME_T[state.lang] || {})[key] || THEME_T.en[key] || key; }
+function esc(x) { return String(x ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function arr(v) { if (!v) return []; if (Array.isArray(v)) return v; try { const x = JSON.parse(v); if (Array.isArray(x)) return x; } catch {} return String(v).split(/[,|;\n]+/).map(x => x.trim()).filter(Boolean); }
+async function api(u) { const r = await fetch(u); if (!r.ok) throw Error(r.status); return r.json(); }
 
-      const body = document.createElement("div");
-      body.className = "ks-body";
+function applyLang() {
+    document.documentElement.lang = state.lang;
+    document.body.classList.toggle('rtl', state.lang === 'ar');
+    $$('[data-t]').forEach(e => e.textContent = tr(e.dataset.t));
+    $$('[data-ph]').forEach(e => e.placeholder = tr(e.dataset.ph));
+    renderAll();
+}
 
-      const name = document.createElement("h3");
-      name.className = "ks-name";
-      if (it.url) {
-        const a = document.createElement("a");
-        a.href = it.url;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        a.textContent = it.product_name;
-        name.appendChild(a);
-      } else {
-        name.textContent = it.product_name;
-      }
+// ========== Navigation / Tabs / Toggles ==========
+$$('.langs button').forEach(b => b.onclick = () => { state.lang = b.dataset.lang; applyLang(); });
+$$('.nav').forEach(b => b.onclick = () => {
+    const p = b.dataset.page;
+    $$('.nav').forEach(x => x.classList.toggle('active', x === b));
+    $$('.page').forEach(x => x.classList.remove('active'));
+    $('#' + p + 'Page').classList.add('active');
+    if (p === 'products' && !state.products.length) loadProducts();
+});
+$$('.periodTab').forEach(b => b.onclick = () => {
+    state.currentPeriod = b.dataset.period;
+    $$('.periodTab').forEach(x => x.classList.toggle('active', x === b));
+    $$('.periodContent').forEach(x => x.classList.remove('active'));
+    $('#' + state.currentPeriod + 'Content').classList.add('active');
+    loadPeriodData();
+});
+$$('.toggleHead').forEach(head => head.addEventListener('click', () => head.closest('.panel').classList.toggle('collapsed')));
 
-      const tags = document.createElement("div");
-      tags.className = "ks-tags";
+// ========== Trend Renders ==========
+function getTrendStatus(velocity) {
+    if (velocity >= 0.10) return `<span style="color:var(--success)">📈 ${tr('trendRising')}</span>`;
+    if (velocity <= -0.10) return `<span style="color:var(--fall)">📉 ${tr('trendFalling')}</span>`;
+    if (velocity === 0) return `<span style="color:var(--text-muted)">➖ ${tr('trendFlat')}</span>`;
+    return `<span style="color:var(--warning)">✨ ${tr('trendNew')}</span>`;
+ }
 
-      const mallTag = document.createElement("span");
-      mallTag.className = "tag mall";
-      mallTag.textContent = mallLabel(it.mall);
-      tags.appendChild(mallTag);
+function renderTrends(a) {
+    $('#trendList').innerHTML = a.length ? a.map((x, i) => `
+        <div class="trendRow">
+            <div class="rankNo">${i + 1}</div>
+            <div style="flex:1">
+                <div class="trendName">${esc(x.keyword)}</div>
+                <div class="trendMeta">
+                    <span class="metaChip">${esc(themeT(x.theme))}</span>
+                    ${getTrendStatus(x.velocity)}
+                    <span class="metaChip">플랫폼: ${Math.round(x.cross_platform_score / 33.3)}개</span>
+                </div>
+            </div>
+            <div class="grow">${x.trend_score.toFixed(1)}</div>
+        </div>`).join('') : `<p class="muted">${tr('noData')}</p>`;
+}
 
-      if (it.velocity != null) {
-        const v = document.createElement("span");
-        v.className = "tag vel";
-        v.textContent = `${t("heat")} ${fmt(it.velocity)}`;
-        tags.appendChild(v);
-      }
-      if (it.accel != null) {
-        const a = document.createElement("span");
-        a.className = "tag vel";
-        a.textContent = `${t("boost")} ${fmt(it.accel)}`;
-        tags.appendChild(a);
-      }
-      if (it.confidence != null) {
-        const c = document.createElement("span");
-        c.className = "tag conf";
-        c.textContent = `${t("trust")} ${fmt(it.confidence, 2)}`;
-        tags.appendChild(c);
-      }
-      if (period !== "day" && it.days_seen) {
-        const d = document.createElement("span");
-        d.className = "tag days";
-        d.textContent = `${t("daysSeen")} ${it.days_seen}`;
-        tags.appendChild(d);
-      }
+function renderMatrix(a) {
+    $('#trendMatrix').innerHTML = a.map(x => `
+        <div class="trendRow">
+            <div style="width:150px"><b>${esc(x.keyword)}</b></div>
+            <div style="flex:1">
+                <div class="meta">
+                    ${getTrendStatus(x.velocity)} · 
+                    지속일: ${Math.round(x.persistence_score * 0.07)}일 · 
+                    플랫폼: ${Math.round(x.cross_platform_score / 33.3)}개
+                </div>
+            </div>
+            <b>${x.trend_score.toFixed(1)}</b>
+        </div>`).join('');
+}
 
-      body.appendChild(name);
-      body.appendChild(tags);
+function renderThemes(themes) {
+    $('#themeGrid').innerHTML = themes.map((t, i) => {
+        const rankClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : 'normal';
+        const rankLabel = state.lang === 'ko' ? `${i+1}위` : state.lang === 'ar' ? `المركز ${i+1}` : `#${i+1}`;
+        return `
+        <div class="themeCard" style="border-color:${t.color}44">
+            <div class="themeHeader">
+                <span class="themeRank ${rankClass}">${rankLabel}</span>
+                <span class="themeIcon">${t.icon}</span>
+                <span class="themeName">${esc(themeT(t.theme))}</span>
+            </div>
+            <div class="meta">${t.keyword_count} keywords</div>
+            <div class="themeKeywords">${(t.top_keywords || []).slice(0, 5).map(k => `<span class="chip">${esc(k.keyword)}</span>`).join('')}</div>
+        </div>`;
+    }).join('');
+}
 
-      const metrics = document.createElement("div");
-      metrics.className = "ks-metrics";
-      const scoreLabel = document.createElement("span");
-      scoreLabel.textContent = t("score");
-      const scoreVal = document.createElement("strong");
-      scoreVal.textContent = fmt(it.score, 1);
-      metrics.appendChild(scoreLabel);
-      metrics.appendChild(scoreVal);
+// ========== Product Renders ==========
+function rankCard(p, i) {
+    const score = state.kind === 'overall' ? p.overall_score : state.kind === 'olive' ? p.olive_rank : p.daiso_score;
+    const right = state.kind === 'olive' ? (score ? `# ${score}` : '—') : (Number(score) > 0 ? score.toFixed(1) : `<span class="noData">—</span>`);
+    return `
+    <div class="rankRow">
+        <div class="rankNo">${i}</div>
+        <div style="flex:1">
+            <a href="${esc(p.product_url)}" target="_blank" rel="noopener noreferrer" class="prodNameLink">${esc(p.product_name)}</a>
+            <div class="meta">${esc(p.brand || '')} · ${esc(p.category || '')}</div>
+        </div>
+        <div class="grow">${right}</div>
+    </div>`;
+}
 
-      card.appendChild(rank);
-      card.appendChild(body);
-      card.appendChild(metrics);
-      list.appendChild(card);
+function renderProducts() {
+    const a = state.products;
+    $('#products').innerHTML = a.map(p => `
+        <div class="productCard" data-id="${esc(p.product_id)}">
+            <div class="source">${esc(p.source || '')}</div>
+            <a href="${esc(p.product_url)}" target="_blank" rel="noopener noreferrer" class="prodNameLink">${esc(p.product_name)}</a>
+            <div class="meta">${esc(p.brand || '')} · ${esc(p.category || '')}</div>
+            <div class="chips">${arr(p.keywords).slice(0, 4).map(x => `<span class="chip">${esc(x)}</span>`).join('')}</div>
+        </div>`).join('');
+    
+    // 상품 카드 전체 클릭 시 링크 이동
+    $$('.productCard').forEach(card => {
+        card.onclick = () => {
+            const url = a.find(p => p.product_id === card.dataset.id)?.product_url;
+            if (url) window.open(url, '_blank');
+        };
     });
-  }
+    $('#loadMore').style.display = state.hasMore ? 'block' : 'none';
+}
 
-  const PLATFORM_LABEL = {
-    tiktok: "TikTok",
-    amazon: "Amazon",
-    instagram: "Instagram",
-    youtube: "YouTube",
-    google: "Google",
-    k_signal: "K-Signal",
-  };
+async function loadProducts(reset = true) {
+    if (reset) { state.page = 0; state.products = []; }
+    const q = encodeURIComponent(state.q), cat = encodeURIComponent(state.category);
+    const limit = reset ? state.initialLoad : state.loadMoreStep;
+    const d = await api(`/api/products?q=${q}&category=${cat}&limit=${limit}&offset=${state.page * state.loadMoreStep}`);
+    state.products = reset ? d.items : state.products.concat(d.items);
+    state.hasMore = d.has_more;
+    $('#productDate').textContent = d.latest_date || $('#productDate').textContent;
+    renderProducts();
+}
 
-  function renderWest(trends, date) {
-    const list = $("westList");
-    const empty = $("westEmpty");
-    list.innerHTML = "";
-    $("westDate").textContent = date || "—";
-
-    if (!trends || !trends.length) {
-      empty.classList.remove("hidden");
-      return;
-    }
-    empty.classList.add("hidden");
-
-    const maxScore = Math.max(...trends.map((x) => Number(x.trend_score) || 0), 1);
-
-    trends.slice(0, 20).forEach((row, idx) => {
-      const el = document.createElement("article");
-      el.className = "west-row";
-
-      const rank = document.createElement("div");
-      rank.className = "west-rank";
-      rank.textContent = idx + 1;
-
-      const mid = document.createElement("div");
-      mid.className = "west-mid";
-
-      const kw = document.createElement("div");
-      kw.className = "west-kw";
-      kw.textContent = row.keyword;
-      mid.appendChild(kw);
-
-      const chips = document.createElement("div");
-      chips.className = "plat-chips";
-      const platforms = row.platforms || [];
-      if (platforms.length) {
-        platforms.forEach((p) => {
-          const chip = document.createElement("span");
-          chip.className = "plat-chip plat-" + String(p).toLowerCase();
-          chip.textContent = PLATFORM_LABEL[String(p).toLowerCase()] || p;
-          chips.appendChild(chip);
-        });
-      } else {
-        const chip = document.createElement("span");
-        chip.className = "plat-chip";
-        chip.textContent = "—";
-        chips.appendChild(chip);
-      }
-      mid.appendChild(chips);
-
-      const score = document.createElement("div");
-      score.className = "west-score";
-      score.textContent = fmt(row.trend_score, 1);
-
-      const bar = document.createElement("div");
-      bar.className = "west-bar";
-      const fill = document.createElement("span");
-      fill.style.width = `${Math.min(100, (Number(row.trend_score) / maxScore) * 100)}%`;
-      bar.appendChild(fill);
-
-      el.appendChild(rank);
-      el.appendChild(mid);
-      el.appendChild(score);
-      el.appendChild(bar);
-      list.appendChild(el);
-    });
-  }
-
-  async function loadAll() {
-    applyI18n();
+async function loadRanking() {
     try {
-      const [ksRes, trendRes] = await Promise.all([
-        fetch(`/api/ksignal/ranking?period=${period}&limit=50`),
-        fetch("/api/dashboard/today?limit=20"),
-      ]);
+        const d = await api('/api/rankings?kind=' + state.kind + '&limit=50');
+        $('#productDate').textContent = d.latest_date || '';
+        $('#rankTitle').textContent = tr(state.kind);
+        $('#rankingList').innerHTML = d.items.map((p, i) => rankCard(p, i + 1)).join('');
+    } catch (e) { $('#rankingList').innerHTML = '<p>' + tr('noData') + '</p>'; }
+}
 
-      const ks = ksRes.ok
-        ? await ksRes.json()
-        : { items: [], malls: [], date: null, count: 0, date_from: null, date_to: null };
-      let trendsPayload = { trends: [], date: null };
-      if (trendRes.ok) trendsPayload = await trendRes.json();
+async function loadChangeData() {
+    try {
+        const d = await api('/api/rankings/change');
+        const renderList = (items, type, elId) => {
+            const el = $(elId);
+            if (!items || !items.length) { el.innerHTML = `<li>${tr('noData')}</li>`; return; }
+            el.innerHTML = items.slice(0, 15).map(item => {
+                const mall = item.source === 'oliveyoung' ? tr('mallOlive') : tr('mallDaiso');
+                let badge = '';
+                if (type === 'new') badge = `<span class="changeBadge new">🆕</span>`;
+                else if (type === 'rise') badge = `<span class="changeBadge rise">▲ +${item.diff}</span>`;
+                else if (type === 'fall') badge = `<span class="changeBadge fall">▼ ${item.diff}</span>`;
+                return `<li><a href="${esc(item.product_url || '#')}" target="_blank" class="prodNameLink">${esc(item.product_name)}</a> <span class="mallBadge">${mall}</span> ${badge}</li>`;
+            }).join('');
+        };
+        renderList(d.new, 'new', '#changeNew');
+        renderList(d.rising, 'rise', '#changeRise');
+        renderList(d.falling, 'fall', '#changeFall');
+    } catch (e) { console.error('Change data error:', e); }
+}
 
-      ksItems = ks.items || [];
-      activeMall = "all";
+async function loadCategories() {
+    const d = await api('/api/categories');
+    $('#category').innerHTML = '<option value="">' + tr('allCategories') + '</option>' + d.items.map(x => `<option value="${esc(x.category)}">${esc(x.category)} (${x.count})</option>`).join('');
+}
 
-      const rangeLabel =
-        period === "day"
-          ? ks.date_to || ks.date || "—"
-          : ks.date_from && ks.date_to
-            ? `${ks.date_from} ~ ${ks.date_to}`
-            : ks.date || "—";
-      $("ksDate").textContent = rangeLabel;
-      $("ksCount").textContent = ks.count ? `${ks.count} ${t("items")}` : "—";
-      $("subtitle").textContent = pack().subtitle(
-        ks.date_from || ks.date,
-        ks.date_to || ks.date,
-        period
-      );
-
-      renderMallFilters(ks.malls || []);
-      renderKsList();
-      renderWest(trendsPayload.trends || [], trendsPayload.date);
-    } catch (err) {
-      console.error(err);
-      $("ksEmpty").classList.remove("hidden");
-      $("ksEmpty").textContent = String(err.message || err);
-    }
-  }
-
-  $("language").addEventListener("change", (e) => {
-    lang = e.target.value;
-    localStorage.setItem("kbeauty_lang", lang);
-    applyI18n();
-    loadAll();
-  });
-
-  $("refreshBtn").addEventListener("click", loadAll);
-
-  document.querySelectorAll(".period-tab").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      period = btn.dataset.period;
-      localStorage.setItem("kbeauty_period", period);
-      applyI18n();
-      loadAll();
+// ========== Search autocomplete ==========
+async function loadSuggestions() {
+    try { const d = await api('/api/suggestions'); SUGGESTIONS = d.items || []; } catch (e) { SUGGESTIONS = []; }
+}
+function renderSuggestions() {
+    const q = state.q.trim().toLowerCase();
+    const list = SUGGESTIONS.filter(k => !q || k.toLowerCase().includes(q)).slice(0, 18);
+    const box = $('#suggestBox');
+    if (!list.length) { box.classList.remove('show'); return; }
+    box.innerHTML = list.map(k => `<span class="chip" data-k="${esc(k)}">${esc(k)}</span>`).join('');
+    box.classList.add('show');
+    $$('#suggestBox .chip').forEach(ch => ch.onclick = () => {
+        $('#search').value = ch.dataset.k; state.q = ch.dataset.k;
+        box.classList.remove('show'); loadProducts();
     });
-  });
+}
 
-  loadAll();
-})();
+let timer;
+$('#search').addEventListener('input', e => {
+    state.q = e.target.value; renderSuggestions();
+    clearTimeout(timer); timer = setTimeout(() => loadProducts(), 350);
+});
+$('#search').addEventListener('focus', renderSuggestions);
+document.addEventListener('click', e => { if (!e.target.closest('.searchWrap')) $('#suggestBox').classList.remove('show'); });
+$('#category').addEventListener('change', e => { state.category = e.target.value; loadProducts(); });
+$('#loadMore').onclick = () => { state.page++; loadProducts(false); };
+
+$$('.rankTab').forEach(b => b.onclick = () => {
+    state.kind = b.dataset.kind;
+    $$('.rankTab').forEach(x => x.classList.toggle('active', x === b));
+    if (state.kind === 'change') {
+        $('#rankPanel').style.display = 'none';
+        $('#changePanel').style.display = 'block';
+        loadChangeData();
+    } else {
+        $('#rankPanel').style.display = 'block';
+        $('#changePanel').style.display = 'none';
+        loadRanking();
+    }
+});
+
+// ========== Data loading ==========
+async function loadDailyData() {
+    try {
+        const d = await api('/api/trends/daily');
+        $('#catalogDate').textContent = d.date || '';
+        renderTrends(d.trends || []);
+        renderMatrix(d.trends || []);
+        const t = await api('/api/trends/themes');
+        renderThemes(t.themes || []);
+    } catch (e) { console.error('Daily trend load error:', e); }
+}
+async function loadWeeklyData() {
+    try { const d = await api('/api/trends/weekly'); renderPeriodList(d.trends || [], '#weeklyList', 5); renderDelta(d.delta || {}, '#weeklyDelta'); } catch (e) { console.error(e); }
+}
+async function loadMonthlyData() {
+    try { const d = await api('/api/trends/monthly'); renderPeriodList(d.trends || [], '#monthlyList', 30); renderDelta(d.delta || {}, '#monthlyDelta'); } catch (e) { console.error(e); }
+}
+function loadPeriodData() {
+    if (state.currentPeriod === 'daily') loadDailyData();
+    else if (state.currentPeriod === 'weekly') loadWeeklyData();
+    else loadMonthlyData();
+}
+
+function renderPeriodList(a, sel, total) {
+    $(sel).innerHTML = (a && a.length) ? a.map((x, i) => `
+        <div class="trendRow">
+            <div class="rankNo">${i + 1}</div>
+            <div style="flex:1">
+                <div class="trendName">${esc(x.keyword)}</div>
+                <div class="trendMeta">
+                    <span class="metaChip">${esc(themeT(x.theme))}</span>
+                    <span class="metaChip">지속일: ${x.active_days}/${total}</span>
+                </div>
+            </div>
+            <div class="grow">${x.total_score.toFixed(1)}</div>
+        </div>`).join('') : `<p class="muted">${tr('noData')}</p>`;
+}
+
+function renderDelta(delta, sel) {
+    const box = $(sel);
+    if (!box) return;
+    const li = (list, f) => (list && list.length ? list.slice(0, 10).map(f).join('') : `<li>${tr('noData')}</li>`);
+    box.innerHTML = `
+        <div class="deltaCard"><h3 class="new">${tr('newEntries')}</h3><ul class="deltaList">${li(delta.new, x => `<li>${esc(x.keyword)} <b>${x.score.toFixed(1)}</b></li>`)}</ul></div>
+        <div class="deltaCard"><h3 class="rising">${tr('risingRank')}</h3><ul class="deltaList">${li(delta.rising, x => `<li>${esc(x.keyword)} <b>${x.prev_score.toFixed(1)} → ${x.curr_score.toFixed(1)}</b></li>`)}</ul></div>
+        <div class="deltaCard"><h3 class="falling">${tr('fallingRank')}</h3><ul class="deltaList">${li(delta.cooling, x => `<li>${esc(x.keyword)} <b>${x.prev_score.toFixed(1)}${x.curr_score ? ' → ' + x.curr_score.toFixed(1) : ''}</b></li>`)}</ul></div>`;
+}
+
+function renderAll() {
+    if ($('#trendPage').classList.contains('active')) loadPeriodData();
+    if ($('#productsPage').classList.contains('active')) {
+        if (state.kind === 'change') loadChangeData();
+        else loadRanking();
+        renderProducts();
+    }
+}
+
+// ========== Init ==========
+applyLang();
+loadDailyData(); // 트렌드 섹션 정상 작동 보장
+loadRanking();
+loadCategories();
+loadSuggestions();
