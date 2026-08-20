@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Western Europe Cosmetics & Skincare Trend Bot — V5 Ultimate
-AI Auto Filter + Rate Limiter (RPM=5) + Flow Engine + Theme Rollup
+Western Europe Cosmetics & Skincare Trend Bot — V5 Ultimate (Lite Edition)
+Gemini 3.5 Flash Lite (RPM=20, RPD=500) + AI Auto Filter + Fallback
 """
 
 import os, sys, re, json, sqlite3, logging, datetime, calendar, math, hashlib, time
@@ -14,10 +14,10 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ============================================================
-# 0. Gemini 모델 설정 (3.7 최신 → 3.6 fallback)
+# 0. Gemini 모델 설정 (3.5 Flash Lite 기본값)
 # ============================================================
-GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "Gemini 3.5 Flash Lite").strip()
-GEMINI_FALLBACK_MODEL = "Gemini 3.5 Flash Lite"
+GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "gemini-3.5-flash-lite").strip()
+GEMINI_FALLBACK_MODEL = "gemini-3.5-flash-lite"
 
 # ============================================================
 # 1. 플랫폼 가중치 + 라이프사이클 라벨
@@ -69,17 +69,17 @@ YOUTUBE_SEARCH_RESULTS_PER_CALL = 50
 YOUTUBE_VIDEO_STATS_BATCH_SIZE = 50
 YOUTUBE_LOOKBACK_DAYS = 7
 
-# 🚨 AI Auto Filter 설정 (일일 20회 제한 방어)
+# 🚨 AI Auto Filter 설정 (3.5 Flash Lite: 일일 500회, 분당 20회)
 AI_FILTER_ENABLED = os.getenv("AI_FILTER_ENABLED", "1").strip().lower() not in ("0", "false", "no")
-AI_FILTER_MAX_SAMPLES = int(os.getenv("AI_FILTER_MAX_SAMPLES_PER_DAY", "60"))
-AI_FILTER_BATCH_SIZE = int(os.getenv("AI_FILTER_BATCH_SIZE", "15"))
+AI_FILTER_MAX_SAMPLES = int(os.getenv("AI_FILTER_MAX_SAMPLES_PER_DAY", "2000"))
+AI_FILTER_BATCH_SIZE = int(os.getenv("AI_FILTER_BATCH_SIZE", "25"))
 AI_FILTER_MIN_TEXT_LEN = 12
 AI_FILTER_KEEP_QUALITIES = {"high", "medium"}
 AI_FILTER_THEMES = ["barrier_soothing", "sun_protection", "acne_pore", "brightening_pigment", "antiaging_regeneration", "hydration", "other"]
 AI_FILTER_INTENTS = ["discovery", "informational", "review", "commercial"]
 
 # ============================================================
-# 3. 테마 규칙 & 태그 로테이션 (짧은 키워드召回)
+# 3. 테마 규칙 & 태그 로테이션
 # ============================================================
 THEME_RULES = [
     ("barrier_soothing", ["ceramide","centella","cica","panthenol","ectoin","barrier","sensitive skin","redness","rosacea","soothing"]),
@@ -170,15 +170,15 @@ def _chunks(lst, n):
     for i in range(0, len(lst), n): yield lst[i:i+n]
 def normalize_keyword(kw): return kw.lower().strip()
 
-# 🚨 Rate Limiter (분당 5회 방어 = 12초에 1회, 안전마진 1초)
+# 🚨 Rate Limiter (분당 20회 방어 = 3초에 1회, 안전마진 0.5초)
 _last_gemini_call_time = 0.0
 def _wait_for_gemini_rate_limit():
     global _last_gemini_call_time
     now = time.time()
     elapsed = now - _last_gemini_call_time
-    if elapsed < 13.0:
-        wait_time = 13.0 - elapsed
-        logging.info(f"⏳ Gemini rate limit: waiting {wait_time:.1f}s (RPM=5)")
+    if elapsed < 3.5:
+        wait_time = 3.5 - elapsed
+        logging.info(f"⏳ Gemini rate limit: waiting {wait_time:.1f}s (RPM=20)")
         time.sleep(wait_time)
     _last_gemini_call_time = time.time()
 
@@ -201,7 +201,6 @@ def init_database():
     conn.execute("CREATE TABLE IF NOT EXISTS google_candidates (id INTEGER PRIMARY KEY AUTOINCREMENT, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, keyword TEXT NOT NULL UNIQUE, source TEXT NOT NULL, times_seen INTEGER NOT NULL DEFAULT 1)")
     conn.execute("CREATE TABLE IF NOT EXISTS api_usage (usage_month TEXT NOT NULL, provider TEXT NOT NULL, endpoint TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, last_called_at TEXT, PRIMARY KEY(usage_month, provider, endpoint))")
     conn.execute("CREATE TABLE IF NOT EXISTS weekly_dynamic_pool (week_id TEXT PRIMARY KEY, keywords_json TEXT NOT NULL, created_at TEXT NOT NULL)")
-    # AI Auto Filter Tables
     conn.execute("CREATE TABLE IF NOT EXISTS ai_filter_state (key TEXT PRIMARY KEY, last_raw_id INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)")
     conn.execute("CREATE TABLE IF NOT EXISTS ai_filtered_signals (id INTEGER PRIMARY KEY AUTOINCREMENT, raw_id INTEGER NOT NULL, signal_date TEXT NOT NULL, platform TEXT NOT NULL, region TEXT, query TEXT, tag TEXT, text_hash TEXT NOT NULL, text TEXT, keep INTEGER NOT NULL DEFAULT 0, quality TEXT, theme TEXT, intent TEXT, ai_reason TEXT, confidence REAL, filtered_at TEXT NOT NULL, UNIQUE(signal_date, platform, text_hash))")
     conn.execute("CREATE TABLE IF NOT EXISTS ai_entity_daily (id INTEGER PRIMARY KEY AUTOINCREMENT, signal_date TEXT NOT NULL, keyword TEXT NOT NULL, platform TEXT NOT NULL, region TEXT NOT NULL, theme TEXT NOT NULL DEFAULT 'other', quality TEXT NOT NULL DEFAULT 'medium', intent TEXT NOT NULL DEFAULT 'discovery', mentions INTEGER NOT NULL DEFAULT 0, UNIQUE(signal_date, keyword, platform, region, theme, quality, intent))")
@@ -554,7 +553,6 @@ def call_gemini_json(prompt: str):
             if use_mime: gc["response_mime_type"] = "application/json"
             payload = {"contents":[{"parts":[{"text":prompt}]}],"generationConfig":gc}
             
-            # 🚨 Rate Limiter 적용 (13초 대기)
             _wait_for_gemini_rate_limit()
             
             try: res = session.post(url, headers=hdr, json=payload, timeout=180)
@@ -582,7 +580,6 @@ def call_gemini_api(prompt: str) -> str:
     for model in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         
-        # 🚨 Rate Limiter 적용 (13초 대기)
         _wait_for_gemini_rate_limit()
         
         try: res = session.post(url, headers=hdr, json=payload, timeout=90)
@@ -1017,6 +1014,27 @@ STRICT: THREE sections separated by ===SPLIT_SECTION===. Order: KOREAN, ARABIC, 
 📌 SHORT IMPLICATIONS"""
     return call_gemini_api(prompt)
 
+def generate_local_fallback_report(trend_scores, google_candidates, freq_summary_str):
+    lines = []
+    lines.append("🌐 글로벌 화장품 & 스킨케어 시장 데일리 트렌드 리포트")
+    lines.append("⚠️ AI 할당량 소진으로 인해 정량적 데이터 요약본으로 대체됩니다.")
+    lines.append("")
+    lines.append("📊 오늘의 정량적 데이터 분석 (TOP 5)")
+    for rank, item in enumerate(trend_scores[:5], 1):
+        lc = lifecycle_label(item.get("lifecycle",""))
+        lines.append(f"{rank}. {item['keyword']}")
+        lines.append(f"   - mentions: {item['today_mentions']} | lifecycle: {lc}")
+        lines.append(f"   - trend_score: {item['trend_score']:.1f} | status: {item['status']}")
+        lines.append("")
+    lines.append("🔍 Google 탐색 후보 (신규 발견)")
+    if google_candidates:
+        for kw in google_candidates[:10]: lines.append(f"- {kw}")
+    else: lines.append("- 없음")
+    lines.append("")
+    lines.append("📌 시사점")
+    lines.append("AI 분석이 생략되었으므로, 위 키워드들의 실제 트렌드 유효성은 교차 검증이 필요합니다.")
+    return "\n".join(lines)
+
 WEEKLY_SUMMARY_WEEKDAY = 5
 FORCE_ROLLUPS = os.getenv("FORCE_ROLLUPS","").strip().lower() in ("1","true","yes")
 
@@ -1131,7 +1149,7 @@ def get_monthly_quota_snapshot():
     return " | ".join(f"{r['provider']}/{r['endpoint']}={r['calls']}" for r in rows) if rows else "No API calls recorded."
 
 # ============================================================
-# 11. Main Pipeline
+# 11. Main Pipeline (with Fallback)
 # ============================================================
 def main():
     logging.info("=== Daily Cosmetics Trend Bot V5 Ultimate Started ===")
@@ -1144,12 +1162,10 @@ def main():
         logging.info("TikTok queries: %s", get_today_tiktok_queries())
         logging.info("Instagram tags: %s", get_today_apify_instagram_tags())
 
-        # 1. Google
         google_data = collect_google_independent_signals(signal_date, regions)
         save_google_daily_rss(signal_date, "NL", fetch_google_daily_rss("NL", 15))
         save_google_daily_rss(signal_date, "DE", fetch_google_daily_rss("DE", 15))
 
-        # 2. Social
         tiktok_signals = fetch_tiktok_captions()
         amazon_signals = fetch_amazon_products()
         instagram_signals = fetch_instagram_apify()
@@ -1157,41 +1173,42 @@ def main():
         all_signals = tiktok_signals + amazon_signals + instagram_signals + youtube_signals
         save_raw_signals(all_signals)
 
-        # 3. AI Auto Filter
         if AI_FILTER_ENABLED:
             try: run_ai_filter(signal_date)
             except Exception as e: logging.error("AI filter failed; fallback to local: %s", e, exc_info=True)
 
-        # 4. Trend source selection: AI + Local Vocab combined
         ai_counts = build_daily_keyword_counts_from_ai(signal_date)
         local_counts = build_daily_keyword_counts(all_signals)
         
-        # Merge counts (AI takes precedence if duplicate, but mostly they complement)
         merged_counts = Counter(local_counts)
-        for k, v in ai_counts.items():
-            merged_counts[k] = merged_counts.get(k, 0) + v
+        for k, v in ai_counts.items(): merged_counts[k] = merged_counts.get(k, 0) + v
             
         save_keyword_counts(signal_date, merged_counts)
         logging.info("Trend source: Merged (AI=%d + Local=%d pairs)", len(ai_counts), len(local_counts))
 
-        # 5. Trend scores
         trend_scores = calculate_trend_scores(signal_date, merged_counts)
         save_trend_scores(signal_date, trend_scores)
         trend_summary_str = build_trend_summary(trend_scores, signal_date=signal_date)
         freq_lines = [f"- {i['keyword']}: {i['today_mentions']} mentions" for i in trend_scores[:20]]
         freq_summary_str = "\n".join(freq_lines) if freq_lines else "No vocabulary frequency data today."
 
-        # 6. Google summary
         google_summary = get_google_summary(signal_date, regions)
         google_candidates = get_google_candidate_list(signal_date, 30)
 
-        # 7. Gemini daily report
-        report = generate_gemini_report(google_summary, google_candidates, all_signals, freq_summary_str, trend_summary_str)
+        logging.info("Generating Gemini report...")
+        try:
+            report = generate_gemini_report(google_summary, google_candidates, all_signals, freq_summary_str, trend_summary_str)
+        except RuntimeError as e:
+            if "429" in str(e) or "quota" in str(e).lower():
+                logging.warning("Gemini quota exhausted (HTTP 429). Falling back to local-only report.")
+                report = generate_local_fallback_report(trend_scores, google_candidates, freq_summary_str)
+            else:
+                raise 
+
         for idx, sec in enumerate([s.strip() for s in report.split("===SPLIT_SECTION===") if s.strip()]):
             logging.info("Sending daily section %d", idx+1)
             send_telegram_message(sec)
 
-        # 8. Weekly rollup
         if is_weekly_summary_day():
             try:
                 wd = get_past_weekday_dates(signal_date)
@@ -1205,7 +1222,6 @@ def main():
                 logging.error("Weekly rollup failed: %s", e, exc_info=True)
                 send_telegram_error(f"Weekly rollup failed: {e}")
 
-        # 9. Monthly rollup
         if is_monthly_summary_day():
             try:
                 md = get_past_month_dates(signal_date)
